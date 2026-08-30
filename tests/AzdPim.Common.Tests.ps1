@@ -136,4 +136,172 @@ Describe 'azd-pim configuration parsing' {
         $receipt.stages.operationalVerification.status | Should -Be 'notRun'
         $receipt.stages.operationalVerification.checks[0].status | Should -Be 'notRun'
     }
+
+    It 'records a sanitized partial receipt when an optional workflow fails after core configuration' {
+        $plan = [pscustomobject]@{ tenantId = '11111111-1111-4111-8111-111111111111'; tiers = [pscustomobject]@{
+            privileged = [pscustomobject]@{ roles = @(1) }; lessPrivileged = [pscustomobject]@{ roles = @() }
+        } }
+        $configuration = [pscustomobject]@{
+            Mode = 'enforced'; PrivilegedRoleScope = 'selected'; ConfirmAllPrivilegedRoles = $false
+            LessPrivilegedRoleScope = 'selected'; ConfirmAllLessPrivilegedRoles = $false
+            EnableSessionRevocation = $true; NotificationMode = 'none'
+        }
+
+        $receipt = New-AzdPimDeploymentReceipt -Plan $plan -Configuration $configuration -PortalLinks ([pscustomobject]@{}) `
+            -PlanReportPath (Join-Path $TestDrive 'plan.json') -AppliedReportPath (Join-Path $TestDrive 'applied.json') -OptionalFailurePhase sessionRevocation
+
+        $receipt.schemaVersion | Should -Be '1.1'
+        $receipt.stages.tenantConfiguration.status | Should -Be 'applied'
+        $receipt.stages.optionalWorkflows.status | Should -Be 'partial'
+        $receipt.stages.optionalWorkflows.failedPhase | Should -Be 'sessionRevocation'
+        $receipt.stages.optionalWorkflows.coreTenantConfigurationApplied | Should -BeTrue
+        ($receipt.nextSteps -join ' ') | Should -Match 'Core PIM and Conditional Access configuration was applied'
+    }
+
+    It 'writes a partial report and receipt before rethrowing an optional workflow failure' {
+        $postProvision = Get-Content -Raw (Join-Path $PSScriptRoot '../scripts/Post-Provision.ps1')
+
+        $postProvision | Should -Match 'catch\s*\{[\s\S]*Write-AppliedReport -OptionalFailurePhase \$currentOptionalPhase[\s\S]*Write-DeploymentReceipt -AppliedReportPath \$appliedReportPath -OptionalFailurePhase \$currentOptionalPhase[\s\S]*throw'
+        $postProvision | Should -Match 'coreTenantConfigurationApplied = \$true'
+    }
+
+    It 'executes the plan-mode Post-Provision receipt path without passing an empty optional phase' {
+        $postProvision = Join-Path $PSScriptRoot '../scripts/Post-Provision.ps1'
+        $originalEnvironment = @{}
+        foreach ($name in @('AZURE_SUBSCRIPTION_ID', 'AZURE_RESOURCE_GROUP', 'AZURE_ENV_NAME')) {
+            $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        $env:AZURE_SUBSCRIPTION_ID = '11111111-1111-1111-1111-111111111111'
+        $env:AZURE_RESOURCE_GROUP = 'rg-pim-test'
+        $env:AZURE_ENV_NAME = 'pim-test'
+
+        try {
+            $script:receiptParameters = $null
+            function Import-AzdEnvironment { }
+            function Get-AzdPimConfiguration { }
+            function Get-AzdPimAzureOperatorContext { }
+            function Connect-AzdPimConfiguredGraph { }
+            function Get-AzdPimState { }
+            function New-AzdPimPlan { }
+            function Write-AzdPimPlanReport { }
+            function Get-AzdPimPortalLinks { }
+            function New-AzdPimDeploymentReceipt { }
+            Mock Import-Module { }
+            Mock Import-AzdEnvironment { }
+            Mock Get-AzdPimConfiguration {
+                [pscustomobject]@{
+                    Mode = 'plan'; PrivilegedRoleScope = 'selected'; ConfirmAllPrivilegedRoles = $false
+                    LessPrivilegedRoleScope = 'selected'; ConfirmAllLessPrivilegedRoles = $false
+                    EnableSessionRevocation = $false; NotificationMode = 'none'
+                }
+            }
+            Mock Get-AzdPimAzureOperatorContext { [pscustomobject]@{ tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; account = 'operator@example.invalid' } }
+            Mock Connect-AzdPimConfiguredGraph { }
+            Mock Get-AzdPimState { $null }
+            Mock New-AzdPimPlan {
+                [pscustomobject]@{
+                    tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                    tiers = [pscustomobject]@{
+                        privileged = [pscustomobject]@{ roles = @() }
+                        lessPrivileged = [pscustomobject]@{ roles = @() }
+                    }
+                }
+            }
+            Mock Write-AzdPimPlanReport { }
+            Mock Get-AzdPimPortalLinks { [pscustomobject]@{} }
+            Mock New-AzdPimDeploymentReceipt {
+                param(
+                    [Parameter(Mandatory)] [object] $Plan,
+                    [Parameter(Mandatory)] [object] $Configuration,
+                    [Parameter(Mandatory)] [object] $PortalLinks,
+                    [Parameter(Mandatory)] [string] $PlanReportPath,
+                    [string] $AppliedReportPath,
+                    [System.Collections.IDictionary] $AzureResources,
+                    [ValidateSet('core', 'polling', 'sessionRevocation')] [string] $OptionalFailurePhase
+                )
+                [pscustomobject]@{ status = 'plan' }
+            }
+            Mock Set-Content { }
+            Mock Write-Host { }
+
+            { & $postProvision } | Should -Not -Throw
+            Should -Invoke New-AzdPimDeploymentReceipt -Times 1 -Exactly
+        } finally {
+            foreach ($name in $originalEnvironment.Keys) {
+                [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process')
+            }
+        }
+    }
+
+    It 'executes the successful enforced Post-Provision report and receipt path without an optional phase' {
+        $postProvision = Join-Path $PSScriptRoot '../scripts/Post-Provision.ps1'
+        $originalEnvironment = @{}
+        foreach ($name in @('AZURE_SUBSCRIPTION_ID', 'AZURE_RESOURCE_GROUP', 'AZURE_ENV_NAME')) {
+            $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        $env:AZURE_SUBSCRIPTION_ID = '11111111-1111-1111-1111-111111111111'
+        $env:AZURE_RESOURCE_GROUP = 'rg-pim-test'
+        $env:AZURE_ENV_NAME = 'pim-test'
+
+        try {
+            function Import-AzdEnvironment { }
+            function Get-AzdPimConfiguration { }
+            function Get-AzdPimAzureOperatorContext { }
+            function Connect-AzdPimConfiguredGraph { }
+            function Get-AzdPimState { }
+            function New-AzdPimPlan { }
+            function Write-AzdPimPlanReport { }
+            function Get-AzdPimPortalLinks { }
+            function Invoke-AzdPimApply { }
+            function Save-AzdPimState { }
+            function New-AzdPimDeploymentReceipt { }
+            Mock Import-Module { }
+            Mock Import-AzdEnvironment { }
+            Mock Get-AzdPimConfiguration {
+                [pscustomobject]@{
+                    Mode = 'enforced'; PrivilegedRoleScope = 'selected'; ConfirmAllPrivilegedRoles = $false
+                    LessPrivilegedRoleScope = 'selected'; ConfirmAllLessPrivilegedRoles = $false
+                    EnableSessionRevocation = $false; NotificationMode = 'none'
+                }
+            }
+            Mock Get-AzdPimAzureOperatorContext { [pscustomobject]@{ tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; account = 'operator@example.invalid' } }
+            Mock Connect-AzdPimConfiguredGraph { }
+            Mock Get-AzdPimState { $null }
+            Mock New-AzdPimPlan {
+                [pscustomobject]@{
+                    tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                    tiers = [pscustomobject]@{
+                        privileged = [pscustomobject]@{ roles = @() }
+                        lessPrivileged = [pscustomobject]@{ roles = @() }
+                    }
+                }
+            }
+            Mock Write-AzdPimPlanReport { }
+            Mock Get-AzdPimPortalLinks { [pscustomobject]@{} }
+            Mock Invoke-AzdPimApply { [pscustomobject]@{ contexts = @(); conditionalAccessPolicies = @() } }
+            Mock Save-AzdPimState { }
+            Mock New-AzdPimDeploymentReceipt {
+                param(
+                    [Parameter(Mandatory)] [object] $Plan,
+                    [Parameter(Mandatory)] [object] $Configuration,
+                    [Parameter(Mandatory)] [object] $PortalLinks,
+                    [Parameter(Mandatory)] [string] $PlanReportPath,
+                    [string] $AppliedReportPath,
+                    [System.Collections.IDictionary] $AzureResources,
+                    [ValidateSet('core', 'polling', 'sessionRevocation')] [string] $OptionalFailurePhase
+                )
+                [pscustomobject]@{ status = 'applied' }
+            }
+            Mock Set-Content { }
+            Mock Write-Host { }
+
+            { & $postProvision } | Should -Not -Throw
+            Should -Invoke Invoke-AzdPimApply -Times 1 -Exactly
+            Should -Invoke New-AzdPimDeploymentReceipt -Times 1 -Exactly
+        } finally {
+            foreach ($name in $originalEnvironment.Keys) {
+                [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process')
+            }
+        }
+    }
 }
