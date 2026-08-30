@@ -1,0 +1,65 @@
+name: Validate azd-pim
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-azd-pim-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install PowerShell test dependencies
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-Module Pester -RequiredVersion 5.7.1 -Force -Scope CurrentUser
+          Install-Module Microsoft.Graph.Authentication -RequiredVersion 2.38.0 -Force -Scope CurrentUser
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/pim-notification-poller/package-lock.json
+
+      - name: Install polling Function dependencies
+        working-directory: src/pim-notification-poller
+        run: npm ci
+
+      - name: Install Bicep
+        run: az bicep install --version v0.46.1
+
+      - name: Run repository validation
+        run: ./scripts/Test-Repository.ps1
+
+      - name: Audit production dependencies
+        working-directory: src/pim-notification-poller
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Check generated-template drift when applicable
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bicepPath = './infra/main.bicep'
+          $armPath = './infra/main.json'
+          if (Test-Path -LiteralPath $armPath) {
+            az bicep build --file $bicepPath
+            if ($LASTEXITCODE -ne 0) { throw 'Bicep build failed.' }
+            Get-Content -LiteralPath $armPath -Raw | ConvertFrom-Json -Depth 100 -AsHashtable | Out-Null
+            git diff --exit-code -- $armPath
+          }
+
+      - name: Confirm validation left the checkout clean
+        run: git diff --exit-code

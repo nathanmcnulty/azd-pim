@@ -1,0 +1,17 @@
+{
+  "name": "azd-pim-notification-poller",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "func start",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@azure/functions": "4.16.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

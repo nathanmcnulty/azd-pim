@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "azd notification envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "eventType",
+    "source",
+    "occurredAt",
+    "severity",
+    "correlationId",
+    "isTest",
+    "environment",
+    "data"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "eventId": { "$ref": "#/$defs/eventId" },
+    "eventType": { "$ref": "#/$defs/namespacedName" },
+    "source": { "$ref": "#/$defs/namespacedName" },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "severity": {
+      "enum": ["informational", "low", "medium", "high", "critical"]
+    },
+    "correlationId": { "$ref": "#/$defs/eventId" },
+    "isTest": { "type": "boolean" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "data": { "type": "object" }
+  },
+  "$defs": {
+    "eventId": {
+      "type": "string",
+      "pattern": "^[^\\u0000-\\u001F]+$",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "namespacedName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[A-Za-z][A-Za-z0-9]*)+$",
+      "maxLength": 256
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "tenantId"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "tenantId": { "type": "string", "format": "uuid" },
+        "subscriptionId": { "type": "string", "format": "uuid" },
+        "resourceGroup": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "manifestVersion": "1.0",
+  "baseline": "2026.08",
+  "components": [
+    {
+      "id": "deployment-validation",
+      "version": "0.3.3",
+      "sourceRepository": "https://github.com/nathanmcnulty/azd-reference",
+      "sourceRevision": "bc2cf2aad4ff5ebadabe8fd0f0efcf71d94d0e0f",
+      "files": [
+        {
+          "source": "components/powershell/deployment-validation/Azd.DeploymentValidation.psd1",
+          "target": "scripts/vendor/Azd.DeploymentValidation/Azd.DeploymentValidation.psd1",
+          "sha256": "8e1b19232570582da7ca8f92fee529f2d93efa6c57fb6fdfe5dbb0d2a0771978"
+        },
+        {
+          "source": "components/powershell/deployment-validation/Azd.DeploymentValidation.psm1",
+          "target": "scripts/vendor/Azd.DeploymentValidation/Azd.DeploymentValidation.psm1",
+          "sha256": "fcf075cbea2dea568ad18145632185a82cb50210628ea332765434c3b62f7b5e"
+        },
+        {
+          "source": "schemas/deployment-validation.schema.json",
+          "target": "scripts/vendor/Azd.DeploymentValidation/deployment-validation.schema.json",
+          "sha256": "f219f008bb04a2eed5230a623191a8caff5363b319d02cbd8c9dd0e239848828"
+        }
+      ]
+    },
+    {
+      "id": "graph-delegated-authentication",
+      "version": "0.1.1",
+      "sourceRepository": "https://github.com/nathanmcnulty/azd-reference",
+      "sourceRevision": "bc2cf2aad4ff5ebadabe8fd0f0efcf71d94d0e0f",
+      "files": [
+        {
+          "source": "components/powershell/graph-delegated-authentication/Azd.GraphAuthentication.psd1",
+          "target": "scripts/vendor/Azd.GraphAuthentication/Azd.GraphAuthentication.psd1",
+          "sha256": "624c237687850a27d748c0af46ed09f289ebf3a5ef18c72761f5a9162c41f696"
+        },
+        {
+          "source": "components/powershell/graph-delegated-authentication/Azd.GraphAuthentication.psm1",
+          "target": "scripts/vendor/Azd.GraphAuthentication/Azd.GraphAuthentication.psm1",
+          "sha256": "f727f0680a6f11be057d5a0993c6fec9917d7de8870685427a5ec8ca4d739b5e"
+        }
+      ]
+    },
+    {
+      "id": "notification-contracts",
+      "version": "1.0.0",
+      "sourceRepository": "https://github.com/nathanmcnulty/azd-reference",
+      "sourceRevision": "bc2cf2aad4ff5ebadabe8fd0f0efcf71d94d0e0f",
+      "files": [
+        {
+          "source": "schemas/notification-envelope.schema.json",
+          "target": "contracts/notifications/notification-envelope.schema.json",
+          "sha256": "627f13be9f5d5813cc350423d164c9bce97d56c3b050cfa753f8f702ee193b4e"
+        },
+        {
+          "source": "schemas/notification-delivery-result.schema.json",
+          "target": "contracts/notifications/notification-delivery-result.schema.json",
+          "sha256": "180f0bf8c23cf1797c5bf52f8cb66b79cb947145e03cc60d51d1c73d5ae2e552"
+        }
+      ]
+    }
+  ]
+}

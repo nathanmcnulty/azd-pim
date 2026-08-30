@@ -1,0 +1,401 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nathanmcnulty/azd-gui/main/schemas/azd-gui.schema.json",
+  "schemaVersion": "1.0",
+  "minimumAzdVersion": "1.23.0",
+  "requiresInteractiveTerminal": true,
+  "prerequisites": [
+    {
+      "id": "azd",
+      "name": "Azure Developer CLI",
+      "kind": "tool",
+      "minimumVersion": "1.23.0",
+      "required": true,
+      "installProvider": "manual"
+    },
+    {
+      "id": "az-cli",
+      "name": "Azure CLI",
+      "kind": "tool",
+      "minimumVersion": "2.60.0",
+      "required": true,
+      "installProvider": "azdTool",
+      "installId": "az-cli",
+      "documentationUrl": "https://learn.microsoft.com/cli/azure/install-azure-cli"
+    },
+    {
+      "id": "pwsh",
+      "name": "PowerShell",
+      "kind": "tool",
+      "minimumVersion": "7.4.0",
+      "required": true,
+      "installProvider": "manual",
+      "documentationUrl": "https://learn.microsoft.com/powershell/scripting/install/installing-powershell"
+    },
+    {
+      "id": "microsoft-graph-authentication",
+      "name": "Microsoft Graph PowerShell authentication",
+      "kind": "powershellModule",
+      "minimumVersion": "2.30.0",
+      "required": true,
+      "installProvider": "psResource",
+      "installId": "Microsoft.Graph.Authentication",
+      "documentationUrl": "https://learn.microsoft.com/powershell/microsoftgraph/installation"
+    }
+  ],
+  "connections": [
+    {
+      "id": "azd",
+      "name": "Azure Developer CLI",
+      "required": true,
+      "reason": "Manage the deployment environment and optional Azure workflows."
+    },
+    {
+      "id": "azureCli",
+      "name": "Azure CLI",
+      "required": true,
+      "scopes": ["https://management.azure.com/.default"],
+      "reason": "Resolve the selected Azure subscription and tenant for azd."
+    },
+    {
+      "id": "graphPowerShell",
+      "name": "Microsoft Graph PowerShell",
+      "required": true,
+      "scopes": [
+        "RoleManagement.Read.Directory",
+        "RoleManagementPolicy.ReadWrite.Directory",
+        "Policy.Read.All",
+        "Policy.ReadWrite.ConditionalAccess",
+        "AuthenticationContext.ReadWrite.All",
+        "Group.Read.All",
+        "Application.Read.All",
+        "Application.ReadWrite.All",
+        "AppRoleAssignment.ReadWrite.All",
+        "PrivilegedAccess-CustomExt.ReadWrite.All"
+      ],
+      "reason": "Use explicit delegated consent to discover roles and configure PIM, authentication contexts, Conditional Access, and the optional emergency-access group exclusion."
+    }
+  ],
+  "configuration": {
+    "groups": [
+      {
+        "id": "deployment",
+        "title": "Deployment safety",
+        "description": "Plan is read-only for Microsoft Entra. Enforced applies the reviewed plan.",
+        "fields": [
+          {
+            "id": "mode",
+            "environmentVariable": "AZD_PIM_MODE",
+            "label": "Mode",
+            "type": "select",
+            "required": true,
+            "default": "plan",
+            "options": [
+              { "label": "Plan only", "value": "plan" },
+              { "label": "Enforced", "value": "enforced" }
+            ]
+          },
+          {
+            "id": "emergencyAccessGroupId",
+            "environmentVariable": "AZD_PIM_EMERGENCY_ACCESS_GROUP_ID",
+            "label": "Emergency-access group object ID",
+            "type": "entraObject",
+            "help": "Recommended but optional. The solution excludes this existing group and never creates or modifies it."
+          },
+          {
+            "id": "adoptExisting",
+            "environmentVariable": "AZD_PIM_ADOPT_EXISTING",
+            "label": "Adopt matching contexts and policies",
+            "type": "boolean",
+            "default": false,
+            "help": "Permit takeover only after reviewing the generated plan."
+          },
+          {
+            "id": "adoptRoleContexts",
+            "environmentVariable": "AZD_PIM_ADOPT_ROLE_CONTEXTS",
+            "label": "Replace different role authentication contexts",
+            "type": "boolean",
+            "default": false,
+            "help": "Permit selected roles that already use another authentication context to be changed."
+          }
+        ]
+      },
+      {
+        "id": "privilegedRoles",
+        "title": "Privileged Entra roles",
+        "description": "The live Graph isPrivileged property is authoritative. Selected scope is the safest pilot.",
+        "fields": [
+          {
+            "id": "privilegedScope",
+            "environmentVariable": "AZD_PIM_PRIVILEGED_ROLE_SCOPE",
+            "label": "Role scope",
+            "type": "select",
+            "required": true,
+            "default": "selected",
+            "options": [
+              { "label": "Selected roles", "value": "selected" },
+              { "label": "All privileged roles", "value": "all" }
+            ]
+          },
+          {
+            "id": "privilegedRoleIds",
+            "environmentVariable": "AZD_PIM_PRIVILEGED_ROLE_IDS",
+            "label": "Selected role definition IDs",
+            "type": "text",
+            "condition": { "field": "privilegedScope", "equals": "selected" },
+            "placeholder": "GUID;GUID",
+            "help": "Semicolon-separated role definition IDs. Empty means manage none, not all."
+          },
+          {
+            "id": "confirmAllPrivilegedRoles",
+            "environmentVariable": "AZD_PIM_CONFIRM_ALL_PRIVILEGED_ROLES",
+            "label": "I acknowledge this targets every privileged role",
+            "type": "boolean",
+            "default": false,
+            "condition": { "field": "privilegedScope", "equals": "all" },
+            "help": "Required for enforced mode when all privileged roles are selected. The live plan shows the exact role count and names."
+          },
+          {
+            "id": "privilegedAuthProfile",
+            "environmentVariable": "AZD_PIM_PRIVILEGED_AUTH_PROFILE",
+            "label": "Authentication requirement",
+            "type": "select",
+            "required": true,
+            "default": "mfa",
+            "options": [
+              { "label": "Require MFA", "value": "mfa" },
+              { "label": "Phishing-resistant MFA", "value": "phishingResistant" },
+              { "label": "Custom authentication strength", "value": "custom" }
+            ]
+          },
+          {
+            "id": "privilegedAuthStrengthId",
+            "environmentVariable": "AZD_PIM_PRIVILEGED_AUTH_STRENGTH_ID",
+            "label": "Custom authentication strength ID",
+            "type": "text",
+            "condition": { "field": "privilegedAuthProfile", "equals": "custom" },
+            "pattern": "^[0-9a-fA-F-]{36}$"
+          },
+          {
+            "id": "privilegedDeviceRequirement",
+            "environmentVariable": "AZD_PIM_PRIVILEGED_DEVICE_REQUIREMENT",
+            "label": "Device requirement",
+            "type": "select",
+            "required": true,
+            "default": "none",
+            "options": [
+              { "label": "None", "value": "none" },
+              { "label": "Compliant", "value": "compliant" },
+              { "label": "Hybrid joined", "value": "hybridJoined" },
+              { "label": "Compliant or hybrid joined", "value": "compliantOrHybrid" }
+            ]
+          },
+          {
+            "id": "privilegedAllowedDeviceIds",
+            "environmentVariable": "AZD_PIM_PRIVILEGED_ALLOWED_DEVICE_IDS",
+            "label": "Exact allowed device IDs",
+            "type": "text",
+            "placeholder": "GUID;GUID",
+            "help": "Optional extra allowlist. A companion block policy excludes only these device IDs."
+          }
+        ]
+      },
+      {
+        "id": "lessPrivilegedRoles",
+        "title": "Less-privileged Entra roles",
+        "fields": [
+          {
+            "id": "lessPrivilegedScope",
+            "environmentVariable": "AZD_PIM_LESS_PRIVILEGED_ROLE_SCOPE",
+            "label": "Role scope",
+            "type": "select",
+            "required": true,
+            "default": "selected",
+            "options": [
+              { "label": "Selected roles", "value": "selected" },
+              { "label": "All less-privileged roles", "value": "all" }
+            ]
+          },
+          {
+            "id": "lessPrivilegedRoleIds",
+            "environmentVariable": "AZD_PIM_LESS_PRIVILEGED_ROLE_IDS",
+            "label": "Selected role definition IDs",
+            "type": "text",
+            "condition": { "field": "lessPrivilegedScope", "equals": "selected" },
+            "placeholder": "GUID;GUID",
+            "help": "Semicolon-separated role definition IDs. Empty means manage none, not all."
+          },
+          {
+            "id": "confirmAllLessPrivilegedRoles",
+            "environmentVariable": "AZD_PIM_CONFIRM_ALL_LESS_PRIVILEGED_ROLES",
+            "label": "I acknowledge this targets every less-privileged role",
+            "type": "boolean",
+            "default": false,
+            "condition": { "field": "lessPrivilegedScope", "equals": "all" },
+            "help": "Required for enforced mode when all less-privileged roles are selected. The live plan shows the exact role count and names."
+          },
+          {
+            "id": "lessPrivilegedAuthProfile",
+            "environmentVariable": "AZD_PIM_LESS_PRIVILEGED_AUTH_PROFILE",
+            "label": "Authentication requirement",
+            "type": "select",
+            "required": true,
+            "default": "mfa",
+            "options": [
+              { "label": "Require MFA", "value": "mfa" },
+              { "label": "Phishing-resistant MFA", "value": "phishingResistant" },
+              { "label": "Custom authentication strength", "value": "custom" }
+            ]
+          },
+          {
+            "id": "lessPrivilegedAuthStrengthId",
+            "environmentVariable": "AZD_PIM_LESS_PRIVILEGED_AUTH_STRENGTH_ID",
+            "label": "Custom authentication strength ID",
+            "type": "text",
+            "condition": { "field": "lessPrivilegedAuthProfile", "equals": "custom" },
+            "pattern": "^[0-9a-fA-F-]{36}$"
+          },
+          {
+            "id": "lessPrivilegedDeviceRequirement",
+            "environmentVariable": "AZD_PIM_LESS_PRIVILEGED_DEVICE_REQUIREMENT",
+            "label": "Device requirement",
+            "type": "select",
+            "required": true,
+            "default": "none",
+            "options": [
+              { "label": "None", "value": "none" },
+              { "label": "Compliant", "value": "compliant" },
+              { "label": "Hybrid joined", "value": "hybridJoined" },
+              { "label": "Compliant or hybrid joined", "value": "compliantOrHybrid" }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "optionalWorkflows",
+        "title": "Optional workflows",
+        "fields": [
+          {
+            "id": "notificationMode",
+            "environmentVariable": "AZD_PIM_NOTIFICATION_MODE",
+            "label": "Teams notification source",
+            "type": "select",
+            "required": true,
+            "default": "none",
+            "options": [
+              { "label": "Disabled", "value": "none" },
+              { "label": "Existing Sentinel / Log Analytics workspace", "value": "sentinel" },
+              { "label": "Microsoft Graph polling on Flex Consumption", "value": "polling" }
+            ]
+          },
+          {
+            "id": "teamsWebhookUrl",
+            "environmentVariable": "AZD_PIM_TEAMS_WEBHOOK_URL",
+            "label": "Teams Workflow webhook URL",
+            "type": "secret",
+            "sensitive": true,
+            "condition": { "field": "notificationMode", "notEquals": "none" },
+            "placeholder": "https://...",
+            "help": "Use a Teams Workflow created with the webhook trigger that posts to the intended channel."
+          },
+          {
+            "id": "sentinelWorkspaceResourceId",
+            "environmentVariable": "AZD_PIM_SENTINEL_WORKSPACE_RESOURCE_ID",
+            "label": "Sentinel / Log Analytics workspace resource ID",
+            "type": "text",
+            "condition": { "field": "notificationMode", "equals": "sentinel" },
+            "placeholder": "/subscriptions/.../providers/Microsoft.OperationalInsights/workspaces/...",
+            "help": "The solution reuses this workspace and expects Microsoft Entra AuditLogs ingestion to already be configured."
+          },
+          {
+            "id": "sentinelWorkspaceLocation",
+            "environmentVariable": "AZD_PIM_SENTINEL_WORKSPACE_LOCATION",
+            "label": "Workspace location",
+            "type": "location",
+            "condition": { "field": "notificationMode", "equals": "sentinel" },
+            "help": "Scheduled-query alert rules must be deployed in the workspace region."
+          },
+          {
+            "id": "pollingSchedule",
+            "environmentVariable": "AZD_PIM_POLLING_SCHEDULE",
+            "label": "Polling NCRONTAB schedule",
+            "type": "text",
+            "default": "0 */5 * * * *",
+            "condition": { "field": "notificationMode", "equals": "polling" }
+          },
+          {
+            "id": "pollingLookbackMinutes",
+            "environmentVariable": "AZD_PIM_POLLING_LOOKBACK_MINUTES",
+            "label": "Polling lookback minutes",
+            "type": "text",
+            "default": "30",
+            "pattern": "^(?:[5-9]|[1-9][0-9]|[1-9][0-9]{2}|1[0-3][0-9]{2}|14[0-3][0-9]|1440)$",
+            "condition": { "field": "notificationMode", "equals": "polling" },
+            "help": "A rolling window plus durable recent-event IDs handles delayed audit delivery without duplicate posts."
+          },
+          {
+            "id": "pollingSendInitialLookback",
+            "environmentVariable": "AZD_PIM_POLLING_SEND_INITIAL_LOOKBACK",
+            "label": "Send activations found on first poll",
+            "type": "boolean",
+            "default": false,
+            "condition": { "field": "notificationMode", "equals": "polling" },
+            "help": "Leave off to seed the watermark without flooding Teams with recent historical activations."
+          },
+          {
+            "id": "enableSessionRevocation",
+            "environmentVariable": "AZD_PIM_ENABLE_SESSION_REVOCATION",
+            "label": "Revoke activator sessions during PIM activation",
+            "type": "boolean",
+            "default": false,
+            "help": "Automatically uses pre-approval for roles without human approval and post-approval for roles that require approval. The administrator can be prompted to authenticate again after activation."
+          },
+          {
+            "id": "revocationFailureBehavior",
+            "environmentVariable": "AZD_PIM_REVOCATION_FAILURE_BEHAVIOR",
+            "label": "If session revocation fails",
+            "type": "select",
+            "condition": { "field": "enableSessionRevocation", "equals": true },
+            "required": true,
+            "default": "deny",
+            "options": [
+              { "label": "Deny activation", "value": "deny" },
+              { "label": "Allow with warning", "value": "approve" }
+            ]
+          },
+          {
+            "id": "revocationAlertActionGroupResourceId",
+            "environmentVariable": "AZD_PIM_REVOCATION_ALERT_ACTION_GROUP_RESOURCE_ID",
+            "label": "Revocation failure action group resource ID",
+            "type": "text",
+            "condition": { "field": "enableSessionRevocation", "equals": true },
+            "placeholder": "/subscriptions/.../providers/Microsoft.Insights/actionGroups/...",
+            "help": "Optional existing Azure Monitor action group. The solution adds a metric alert when a session-revocation workflow action fails."
+          }
+        ]
+      }
+    ]
+  },
+  "permissionChecks": [
+    {
+      "id": "azure-subscription-access",
+      "name": "Azure subscription access",
+      "provider": "azure",
+      "required": true,
+      "description": "Azure CLI can read the selected subscription used for optional workflow resources."
+    },
+    {
+      "id": "graph-directory-read",
+      "name": "Microsoft Graph directory access",
+      "provider": "graph",
+      "required": true,
+      "description": "The proven Microsoft Graph PowerShell session can query role definitions, role settings, authentication contexts, and Conditional Access."
+    },
+    {
+      "id": "graph-delegated-scopes",
+      "name": "Microsoft Graph delegated scopes",
+      "provider": "graph",
+      "required": true,
+      "description": "The Graph PowerShell connection includes the delegated read/write scopes declared by this template."
+    }
+  ]
+}

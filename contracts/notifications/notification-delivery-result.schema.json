@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "azd notification delivery result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "eventType",
+    "correlationId",
+    "idempotencyKey",
+    "route",
+    "status",
+    "attempt",
+    "recordedAt",
+    "isTest",
+    "environment",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "eventId": { "$ref": "#/$defs/eventId" },
+    "eventType": { "$ref": "#/$defs/namespacedName" },
+    "correlationId": { "$ref": "#/$defs/eventId" },
+    "idempotencyKey": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "audience", "transport"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][A-Za-z0-9._-]{0,127}$"
+        },
+        "audience": { "enum": ["user", "admin"] },
+        "transport": { "$ref": "#/$defs/namespacedName" }
+      }
+    },
+    "status": {
+      "enum": ["succeeded", "alreadyDelivered", "skipped", "failed"]
+    },
+    "attempt": { "type": "integer", "minimum": 0 },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "isTest": { "type": "boolean" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "skipReason": {
+      "enum": ["initialBaseline", "suppressedByPolicy", "concurrentDelivery"]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "httpStatusCode": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "providerCode": { "$ref": "#/$defs/safeCode" },
+        "operationId": { "$ref": "#/$defs/safeIdentifier" },
+        "runId": { "$ref": "#/$defs/safeIdentifier" },
+        "actionName": { "$ref": "#/$defs/safeIdentifier" }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "retryable"],
+      "properties": {
+        "category": {
+          "enum": [
+            "authentication",
+            "authorization",
+            "throttled",
+            "timeout",
+            "transientProvider",
+            "invalidRequest",
+            "destinationUnavailable",
+            "unknown"
+          ]
+        },
+        "retryable": { "type": "boolean" },
+        "code": { "$ref": "#/$defs/safeCode" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "failed" } },
+        "required": ["status"]
+      },
+      "then": { "required": ["failure"] },
+      "else": { "not": { "required": ["failure"] } }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "skipped" } },
+        "required": ["status"]
+      },
+      "then": { "required": ["skipReason"] },
+      "else": { "not": { "required": ["skipReason"] } }
+    }
+  ],
+  "$defs": {
+    "eventId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:|-]*$",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "namespacedName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[A-Za-z][A-Za-z0-9]*)+$",
+      "maxLength": 256
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "tenantId"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "tenantId": { "type": "string", "format": "uuid" },
+        "subscriptionId": { "type": "string", "format": "uuid" },
+        "resourceGroup": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "safeCode": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$"
+    },
+    "safeIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:|-]*$",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  }
+}

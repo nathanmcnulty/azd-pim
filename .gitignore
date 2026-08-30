@@ -1,0 +1,4 @@
+.azure/
+reports/
+*.local.json
+node_modules/
