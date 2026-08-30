@@ -457,7 +457,7 @@ test('rejects a non-Graph continuation link before forwarding the bearer token',
     pollPimActivations(null, contextCapture().context),
     /invalid directory audit continuation link/,
   );
-  assert.equal(callsTo(harness, (call) => call.url.startsWith('https://attacker.example.test')).length, 0);
+  assert.equal(callsTo(harness, (call) => new URL(call.url).hostname === 'attacker.example.test').length, 0);
   assert.equal(callsTo(harness, (call) => call.url.startsWith('https://graph.microsoft.com/')).length, 1);
   assert.equal(callsTo(harness, (call) => call.method === 'PUT').length, 0);
 });
