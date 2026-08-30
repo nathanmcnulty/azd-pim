@@ -1,0 +1,23 @@
+{
+  "title": "Privileged Identity Management automation",
+  "summary": "Deploys and validates Microsoft Entra PIM role policies, authentication contexts, and optional administrator notifications with fail-closed ownership controls.",
+  "tags": [
+    "Microsoft Entra ID",
+    "Privileged Identity Management",
+    "Conditional Access",
+    "Managed Identity",
+    "Microsoft Teams"
+  ],
+  "highlights": [
+    "Guides administrators through role-tier configuration with plan-first validation.",
+    "Uses exact tenant-bound ownership and crash-resumable mutation checkpoints.",
+    "Supports optional polling notifications without retaining delegated tokens or client secrets.",
+    "Provides repository-contained validation for component provenance and deployment readiness."
+  ],
+  "featured": false,
+  "solutionCount": 1,
+  "quickstartCommands": [
+    "azd init --template nathanmcnulty/azd-pim",
+    "azd up"
+  ]
+}
