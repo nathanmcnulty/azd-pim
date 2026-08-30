@@ -347,7 +347,7 @@
             "label": "Revoke activator sessions during PIM activation",
             "type": "boolean",
             "default": false,
-            "help": "Automatically uses pre-approval for roles without human approval and post-approval for roles that require approval. The administrator can be prompted to authenticate again after activation."
+            "help": "Preview: invalidates the activating user's broader Entra refresh-token and browser sessions, not only the PIM page; propagation can take minutes. Uses pre-approval for roles without human approval and post-approval for roles requiring approval. Start with a selected-role pilot and ensure the operator can reauthenticate."
           },
           {
             "id": "revocationFailureBehavior",

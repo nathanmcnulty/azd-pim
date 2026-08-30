@@ -174,6 +174,228 @@ Describe 'Conditional Access policy construction' {
 }
 
 Describe 'deployment state preservation' {
+    It 'checkpoints a stable context ownership intent before its first Graph write' {
+        $script:checkpoint = $null
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph { throw 'The Graph write must occur after the checkpoint.' }
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = [pscustomobject]@{ id = 'c5'; displayName = 'PIM Privileged Roles'; action = 'create'; adopted = $false; existing = [pscustomobject]@{ id = 'c5'; isAvailable = $false; displayName = ''; description = '' } }; conditionalAccessPolicies = @(); roleRules = @() }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+
+        { Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false -StateChanged { param($checkpoint) $script:checkpoint = $checkpoint; throw 'checkpointed' } } | Should -Throw 'checkpointed'
+        $script:checkpoint.contexts.privileged.id | Should -Be 'c5'
+        $script:checkpoint.contexts.privileged.pendingIntent.action | Should -Be 'create'
+        Should -Invoke Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph -Times 0 -Exactly
+    }
+
+    It 'retains a pending context intent when the Graph write succeeds but the final checkpoint fails' {
+        $script:checkpoints = @()
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph { [pscustomobject]@{} }
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = [pscustomobject]@{ id = 'c5'; displayName = 'PIM Privileged Roles'; action = 'create'; adopted = $false; existing = [pscustomobject]@{ id = 'c5'; isAvailable = $false; displayName = ''; description = '' } }; conditionalAccessPolicies = @(); roleRules = @() }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+
+        { Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false -StateChanged { param($checkpoint) $script:checkpoints += ($checkpoint | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100); if ($script:checkpoints.Count -eq 2) { throw 'final checkpoint failed' } } } | Should -Throw 'final checkpoint failed'
+        $script:checkpoints.Count | Should -Be 2
+        $script:checkpoints[0].contexts.privileged.pendingIntent.action | Should -Be 'create'
+        Should -Invoke Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph -Times 1 -Exactly
+    }
+
+    It 'recovers only an exact unique Conditional Access policy matching a pending create intent' {
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $existing = $body | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $existing | Add-Member -NotePropertyName id -NotePropertyValue 'policy-id'
+        $state = [pscustomobject]@{ conditionalAccessPolicies = [pscustomobject]@{ privileged = [pscustomobject]@{ pendingCreate = [pscustomobject]@{ displayName = 'PIM pending'; body = $body } } } }
+
+        $result = & (Get-Module AzdPim.Graph) { Resolve-AzdPimConditionalAccessPolicy -Key privileged -DisplayName 'PIM pending' -Body $args[0] -Policies @($args[1]) -State $args[2] -AdoptExisting $false } $body $existing $state
+
+        $result.action | Should -Be 'none'
+        $result.recoveredPendingCreate | Should -BeTrue
+        $result.id | Should -Be 'policy-id'
+    }
+
+    It 'checkpoints a server-assigned Conditional Access create intent before the POST' {
+        $script:checkpoint = $null
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @([pscustomobject]@{ key = 'privileged'; id = $null; action = 'create'; body = $body; adopted = $false; existing = $null; recoveredPendingCreate = $false }); roleRules = @() }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph { throw 'POST must not run before the state checkpoint.' }
+
+        { Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false -StateChanged { param($checkpoint) $script:checkpoint = $checkpoint; throw 'checkpointed' } } | Should -Throw 'checkpointed'
+        $script:checkpoint.conditionalAccessPolicies.privileged.pendingCreate.displayName | Should -Be 'PIM pending'
+        $script:checkpoint.conditionalAccessPolicies.privileged.pendingCreate.body.displayName | Should -Be 'PIM pending'
+        Should -Invoke Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph -Times 0 -Exactly
+    }
+
+    It 'retains a pending Conditional Access create intent if the POST succeeds before final checkpointing' {
+        $script:checkpoints = @()
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @([pscustomobject]@{ key = 'privileged'; id = $null; action = 'create'; body = $body; adopted = $false; existing = $null; recoveredPendingCreate = $false }); roleRules = @() }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph { [pscustomobject]@{ id = '11111111-1111-1111-1111-111111111111' } }
+
+        { Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false -StateChanged { param($checkpoint) $script:checkpoints += ($checkpoint | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100); if ($script:checkpoints.Count -eq 2) { throw 'final checkpoint failed' } } } | Should -Throw 'final checkpoint failed'
+        $script:checkpoints[0].conditionalAccessPolicies.privileged.pendingCreate.displayName | Should -Be 'PIM pending'
+        Should -Invoke Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph -Times 1 -Exactly
+    }
+
+    It 'fails closed when pending Conditional Access recovery is ambiguous or mismatched' {
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $existing = $body | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $existing | Add-Member -NotePropertyName id -NotePropertyValue 'policy-id'
+        $state = [pscustomobject]@{ conditionalAccessPolicies = [pscustomobject]@{ privileged = [pscustomobject]@{ pendingCreate = [pscustomobject]@{ displayName = 'PIM pending'; body = $body } } } }
+
+        { & (Get-Module AzdPim.Graph) { Resolve-AzdPimConditionalAccessPolicy -Key privileged -DisplayName 'PIM pending' -Body $args[0] -Policies @($args[1], $args[2]) -State $args[3] -AdoptExisting $false } $body $existing ($existing | Select-Object *) $state } | Should -Throw '*Multiple Conditional Access*'
+        $existing.conditions.applications.includeAuthenticationContextClassReferences = @('c9')
+        { & (Get-Module AzdPim.Graph) { Resolve-AzdPimConditionalAccessPolicy -Key privileged -DisplayName 'PIM pending' -Body $args[0] -Policies @($args[1]) -State $args[2] -AdoptExisting $false } $body $existing $state } | Should -Throw '*does not exactly match*'
+    }
+
+    It 'preserves original Conditional Access ownership provenance while clearing a pending update' {
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM owned' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $prior = [pscustomobject]@{ id = '11111111-1111-1111-1111-111111111111'; created = $true; adopted = $false; previous = [pscustomobject]@{ displayName = 'original' } }
+        $state = [pscustomobject]@{ tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; contexts = [pscustomobject]@{}; conditionalAccessPolicies = [pscustomobject]@{ privileged = $prior }; appliedRoleRules = [pscustomobject]@{}; pendingRoleRules = [pscustomobject]@{} }
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = $state.tenantId
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @([pscustomobject]@{ key = 'privileged'; id = $prior.id; action = 'update'; body = $body; adopted = $false; existing = [pscustomobject]@{ id = $prior.id }; recoveredPendingCreate = $false }); roleRules = @() }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph { [pscustomobject]@{} }
+
+        $result = Invoke-AzdPimApply -Plan $plan -ExistingState $state -Confirm:$false
+
+        $result.conditionalAccessPolicies.privileged.created | Should -BeTrue
+        $result.conditionalAccessPolicies.privileged.previous.displayName | Should -Be 'original'
+        $result.conditionalAccessPolicies.privileged.PSObject.Properties.Name | Should -Not -Contain 'pendingIntent'
+    }
+
+    It 'preserves original authentication-context ownership provenance while clearing a pending update' {
+        $state = [pscustomobject]@{ tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; contexts = [pscustomobject]@{ privileged = [pscustomobject]@{ id = 'c5'; created = $true; adopted = $false; previous = $null } }; conditionalAccessPolicies = [pscustomobject]@{}; appliedRoleRules = [pscustomobject]@{}; pendingRoleRules = [pscustomobject]@{} }
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = $state.tenantId
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = [pscustomobject]@{ id = 'c5'; displayName = 'PIM Privileged Roles'; action = 'update'; adopted = $false; existing = [pscustomobject]@{ id = 'c5' } }; conditionalAccessPolicies = @(); roleRules = @() }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph { [pscustomobject]@{} }
+
+        $result = Invoke-AzdPimApply -Plan $plan -ExistingState $state -Confirm:$false
+
+        $result.contexts.privileged.created | Should -BeTrue
+        $result.contexts.privileged.PSObject.Properties.Name | Should -Not -Contain 'pendingIntent'
+    }
+
+    It 'clears a pending role-rule intent only after the exact live re-plan is already correct' {
+        $roleId = '11111111-1111-1111-1111-111111111111'
+        $state = [pscustomobject]@{ tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; contexts = [pscustomobject]@{}; conditionalAccessPolicies = [pscustomobject]@{}; appliedRoleRules = [pscustomobject]@{}; pendingRoleRules = [pscustomobject]@{ $roleId = [pscustomobject]@{ policyId = 'policy-id'; desiredContextId = 'c5'; legacyActivationMfaRemoved = $true } } }
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = $state.tenantId
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @([pscustomobject]@{ role = [pscustomobject]@{ id = $roleId; displayName = 'Recovered role' }; policyId = 'policy-id'; action = 'none'; desiredContextId = 'c5'; activationMfa = [pscustomobject]@{ action = 'none' } }) }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+
+        $result = Invoke-AzdPimApply -Plan $plan -ExistingState $state -Confirm:$false
+
+        $result.pendingRoleRules.Contains($roleId) | Should -BeFalse
+        $result.appliedRoleRules[$roleId].recoveredPendingIntent | Should -BeTrue
+        $result.appliedRoleRules[$roleId].removedLegacyActivationMfa | Should -BeTrue
+    }
+
+    It 'checkpoints the legacy-MFA removal phase before a crash can lose it' {
+        $roleId = '11111111-1111-1111-1111-111111111111'
+        $script:checkpoints = @()
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @([pscustomobject]@{
+                    role = [pscustomobject]@{ id = $roleId; displayName = 'Crash recovery role' }; policyId = 'policy-id'; action = 'update'; desiredContextId = 'c5'
+                    existing = [pscustomobject]@{ target = [pscustomobject]@{ caller = 'EndUser'; operations = @('all'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() } }
+                    activationMfa = [pscustomobject]@{ action = 'remove'; desiredEnabledRules = @('Justification'); existing = [pscustomobject]@{ enabledRules = @('MultiFactorAuthentication', 'Justification'); target = [pscustomobject]@{ caller = 'EndUser'; operations = @('all'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() } } }
+                }) }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph { [pscustomobject]@{} }
+
+        { Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false -StateChanged { param($checkpoint) $script:checkpoints += ($checkpoint | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100); if ($script:checkpoints.Count -eq 2) { throw 'crash after legacy MFA removal' } } } | Should -Throw '*legacy MFA was restored*'
+        $pending = $script:checkpoints[1].pendingRoleRules.PSObject.Properties[$roleId].Value
+        $pending.legacyActivationMfaRemoved | Should -BeTrue
+        $pending.PSObject.Properties.Name | Should -Not -Contain 'existing'
+        $script:checkpoints[2].pendingRoleRules.PSObject.Properties[$roleId].Value.legacyActivationMfaRemoved | Should -BeFalse
+    }
+
+    It 'resets the legacy-MFA phase after successful restoration before rethrowing an attachment failure' {
+        $roleId = '11111111-1111-1111-1111-111111111111'
+        $script:checkpoints = @()
+        $script:enablementWrites = 0
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @([pscustomobject]@{
+                    role = [pscustomobject]@{ id = $roleId; displayName = 'Restore recovery role' }; policyId = 'policy-id'; action = 'update'; desiredContextId = 'c5'
+                    existing = [pscustomobject]@{ target = [pscustomobject]@{ caller = 'EndUser'; operations = @('all'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() } }
+                    activationMfa = [pscustomobject]@{ action = 'remove'; desiredEnabledRules = @('Justification'); existing = [pscustomobject]@{ enabledRules = @('MultiFactorAuthentication', 'Justification'); target = [pscustomobject]@{ caller = 'EndUser'; operations = @('all'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() } } }
+                }) }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph {
+            if ($Uri -like '*/Enablement_EndUser_Assignment') { $script:enablementWrites++; return [pscustomobject]@{} }
+            throw 'attachment failed'
+        }
+
+        { Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false -StateChanged { param($checkpoint) $script:checkpoints += ($checkpoint | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100) } } | Should -Throw '*legacy MFA was restored*'
+        $script:enablementWrites | Should -Be 2
+        $pending = $script:checkpoints[2].pendingRoleRules.PSObject.Properties[$roleId].Value
+        $pending.legacyActivationMfaRemoved | Should -BeFalse
+        $pending.PSObject.Properties.Name | Should -Not -Contain 'existing'
+    }
+
+    It 'reports a restored-state checkpoint failure without mislabeling it as Graph restoration failure' {
+        $roleId = '11111111-1111-1111-1111-111111111111'
+        $script:checkpointCount = 0
+        $script:enablementWrites = 0
+        $plan = [pscustomobject]@{
+            mode = 'enforced'; tenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            tiers = [pscustomobject]@{
+                privileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @([pscustomobject]@{
+                    role = [pscustomobject]@{ id = $roleId; displayName = 'Checkpoint failure role' }; policyId = 'policy-id'; action = 'update'; desiredContextId = 'c5'
+                    existing = [pscustomobject]@{ target = [pscustomobject]@{ caller = 'EndUser'; operations = @('all'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() } }
+                    activationMfa = [pscustomobject]@{ action = 'remove'; desiredEnabledRules = @('Justification'); existing = [pscustomobject]@{ enabledRules = @('MultiFactorAuthentication', 'Justification'); target = [pscustomobject]@{ caller = 'EndUser'; operations = @('all'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() } } }
+                }) }
+                lessPrivileged = [pscustomobject]@{ context = $null; conditionalAccessPolicies = @(); roleRules = @() }
+            }
+        }
+        Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph {
+            if ($Uri -like '*/Enablement_EndUser_Assignment') { $script:enablementWrites++; return [pscustomobject]@{} }
+            throw 'attachment failed'
+        }
+
+        { Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false -StateChanged { param($checkpoint) $script:checkpointCount++; if ($script:checkpointCount -eq 3) { throw 'local state write failed' } } } | Should -Throw '*recording the restored state failed*'
+        $script:enablementWrites | Should -Be 2
+    }
+
     It 'does not send Graph writes for no-op contexts and policies' {
         Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph { throw 'No Graph write was expected.' }
         $existingState = [pscustomobject]@{
@@ -252,6 +474,7 @@ Describe 'deployment state preservation' {
     It 'records the applied context but not the prior PIM rule body' {
         $script:capturedRoleRuleBody = $null
         $script:capturedEnablementBody = $null
+        $script:checkpoints = @()
         Mock Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph {
             if ($Method -eq 'PATCH' -and $Uri -like '*/Enablement_EndUser_Assignment') {
                 $script:capturedEnablementBody = $Body
@@ -292,7 +515,7 @@ Describe 'deployment state preservation' {
             }
         }
 
-        $result = Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false
+        $result = Invoke-AzdPimApply -Plan $plan -ExistingState $null -Confirm:$false -StateChanged { param($checkpoint) $script:checkpoints += ($checkpoint | ConvertTo-Json -Depth 100 | ConvertFrom-Json -Depth 100) }
         $record = $result.appliedRoleRules['11111111-1111-1111-1111-111111111111']
         $record.desiredContextId | Should -Be 'c5'
         $record.removedLegacyActivationMfa | Should -BeTrue
@@ -302,5 +525,9 @@ Describe 'deployment state preservation' {
         $capturedRoleRuleBody.target.operations | Should -Be @('all')
         $capturedEnablementBody.enabledRules | Should -Be @('Justification')
         $capturedEnablementBody.target | Should -BeOfType [hashtable]
+        $script:checkpoints.Count | Should -Be 3
+        $script:checkpoints[0].pendingRoleRules.PSObject.Properties['11111111-1111-1111-1111-111111111111'].Value.desiredContextId | Should -Be 'c5'
+        $script:checkpoints[1].pendingRoleRules.PSObject.Properties['11111111-1111-1111-1111-111111111111'].Value.legacyActivationMfaRemoved | Should -BeTrue
+        $script:checkpoints[2].appliedRoleRules.PSObject.Properties['11111111-1111-1111-1111-111111111111'].Value.desiredContextId | Should -Be 'c5'
     }
 }

@@ -275,7 +275,8 @@ function New-AzdPimDeploymentReceipt {
         [Parameter(Mandatory)] [object] $PortalLinks,
         [Parameter(Mandatory)] [string] $PlanReportPath,
         [string] $AppliedReportPath,
-        [System.Collections.IDictionary] $AzureResources = [ordered]@{}
+        [System.Collections.IDictionary] $AzureResources = [ordered]@{},
+        [ValidateSet('core', 'polling', 'sessionRevocation')] [string] $OptionalFailurePhase
     )
 
     $resourceEntries = @($AzureResources.GetEnumerator() | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Value) } | ForEach-Object {
@@ -302,6 +303,11 @@ function New-AzdPimDeploymentReceipt {
     if ($isPlan) {
         $nextSteps.Add('Review the plan report, preserve the selected scope, and change AZD_PIM_MODE to enforced only when ready.')
     } else {
+        if ($OptionalFailurePhase -eq 'core') {
+            $nextSteps.Add('Core PIM and Conditional Access configuration did not complete. Review the partial receipt and durable state, correct the failure, and rerun the same environment without adopting same-named Entra resources.')
+        } elseif ($OptionalFailurePhase) {
+            $nextSteps.Add("Core PIM and Conditional Access configuration was applied. Correct the failed optional '$OptionalFailurePhase' workflow and rerun the same environment; do not delete or adopt same-named Entra resources.")
+        }
         if ($verificationChecks.Count -gt 0) {
             $nextSteps.Add('Complete each pending live verification check; deployment success alone is not delivery or callback proof.')
         } else {
@@ -310,7 +316,7 @@ function New-AzdPimDeploymentReceipt {
     }
 
     return [pscustomobject]@{
-        schemaVersion = '1.0'
+        schemaVersion = '1.1'
         generatedAt = [DateTimeOffset]::UtcNow.ToString('o')
         environmentName = [string]$env:AZURE_ENV_NAME
         tenantId = [string]$Plan.tenantId
@@ -333,13 +339,18 @@ function New-AzdPimDeploymentReceipt {
                 resources = $resourceEntries
             }
             tenantConfiguration = [pscustomobject]@{
-                status = if ($isPlan) { 'planned' } else { 'applied' }
+                status = if ($isPlan) { 'planned' } elseif ($OptionalFailurePhase -eq 'core') { 'partial' } else { 'applied' }
                 privilegedRoleCount = @($Plan.tiers.privileged.roles).Count
                 lessPrivilegedRoleCount = @($Plan.tiers.lessPrivileged.roles).Count
             }
             operationalVerification = [pscustomobject]@{
                 status = if ($isPlan -and $verificationChecks.Count -gt 0) { 'notRun' } elseif ($verificationChecks.Count -gt 0) { 'pending' } else { 'notRequired' }
                 checks = @($verificationChecks)
+            }
+            optionalWorkflows = [pscustomobject]@{
+                status = if ($OptionalFailurePhase -eq 'core') { 'notRun' } elseif ($OptionalFailurePhase) { 'partial' } elseif ($Configuration.NotificationMode -ne 'none' -or $Configuration.EnableSessionRevocation) { 'configured' } else { 'notRequired' }
+                failedPhase = if ($OptionalFailurePhase) { $OptionalFailurePhase } else { $null }
+                coreTenantConfigurationApplied = (-not $isPlan -and $OptionalFailurePhase -ne 'core')
             }
         }
         artifacts = [pscustomobject]@{

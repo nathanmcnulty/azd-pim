@@ -39,7 +39,7 @@ The default mode is `plan`. It performs Microsoft Graph reads and writes `report
 4. Creates or updates authentication contexts.
 5. Creates or updates enabled Conditional Access policies while they are inert because no selected PIM role requests the new contexts yet.
 6. Attaches the contexts to selected role activation rules.
-7. Writes tenant-bound ownership state under `.azure/<environment>/azd-pim-state.json` without retaining prior PIM role-rule bodies.
+7. Writes tenant-bound ownership state under `.azure/<environment>/azd-pim-state.json` without retaining prior PIM role-rule bodies. Checkpoints are written before and after each durable mutation. A server-assigned Conditional Access create is reconciled only when one live policy exactly matches its recorded intent; a pending role-rule intent is cleared only after an exact live re-plan proves the desired context is already attached.
 
 Matching pre-existing contexts or policies cause a conflict unless `AZD_PIM_ADOPT_EXISTING=true`. A role that already uses a different context causes a separate conflict unless `AZD_PIM_ADOPT_ROLE_CONTEXTS=true`.
 
@@ -49,7 +49,7 @@ Deployment validation follows the shared portfolio convention in [`docs/deployme
 
 For repository changes, run `./scripts/Test-Repository.ps1`. It parses the PowerShell source, runs the offline Pester and Node suites, restores Node dependencies from the local npm cache, and compiles the root Bicep template to stdout without connecting to a tenant.
 
-Tenant cleanup is opt-in. By default, `azd down` preserves Microsoft Entra configuration. Even with `AZD_PIM_REMOVE_TENANT_CONFIGURATION=true`, PIM role rules and authentication contexts are preserved. The cleanup path is limited to solution-created Conditional Access policies and restoration of adopted Conditional Access policies. This avoids silently weakening role activation after a role is removed from the template's current scope.
+Tenant cleanup is opt-in. By default, `azd down` preserves Microsoft Entra configuration. Even with `AZD_PIM_REMOVE_TENANT_CONFIGURATION=true`, PIM role rules, authentication contexts, the session-revocation application registration and service principal, custom extensions, Graph permissions, and custom-extension role links are preserved. The cleanup path is limited to solution-created Conditional Access policies and restoration of adopted Conditional Access policies. This avoids silently weakening role activation after a role is removed from the template's current scope. Review the durable state and remove optional Entra resources manually only when their references have been deliberately detached.
 
 ## Start with a pilot
 
@@ -157,7 +157,7 @@ All beta calls are isolated in `scripts/AzdPim.Graph.psm1`, and the plan records
 
 ### Deployment receipt and administrator links
 
-Every run writes `reports/azd-pim-deployment.json`. The receipt reports Azure infrastructure, Microsoft Entra configuration, and operational verification as separate stages. Plan mode records Azure resources as `notChanged` and live checks as `notRun`. After enforcement, optional workflows remain `pending` until an administrator proves a real PIM callback or Teams delivery; successful provisioning alone is not treated as live verification.
+Every run writes `reports/azd-pim-deployment.json`. The receipt reports Azure infrastructure, Microsoft Entra configuration, and operational verification as separate stages. Plan mode records Azure resources as `notChanged` and live checks as `notRun`. If a core or optional phase fails after a durable mutation, it records a sanitized `partial` receipt before rethrowing; it identifies the failed phase but never serializes tokens, callback signatures, webhooks, or raw provider errors. Correct the indicated configuration and rerun the same environment. Do not delete state or adopt same-named Entra resources to bypass the conflict. After enforcement, optional workflows remain `pending` until an administrator proves a real PIM callback or Teams delivery; successful provisioning alone is not treated as live verification.
 
 The applied report and console output include tenant-scoped links for PIM role activation, Conditional Access, the Azure resource group, and each deployed optional Azure resource. The receipt contains only identifiers and local report paths; it does not serialize Graph tokens, Teams webhooks, or Logic App callback signatures. The corresponding azd-gui artifact and guided-verification design is tracked in [azd-gui issue #55](https://github.com/nathanmcnulty/azd-gui/issues/55).
 
@@ -178,7 +178,7 @@ The polling Function emits safe route-level contract results for success, baseli
 
 The component is a PIM `roleManagementCustomCalloutExtension`, not an Entitlement Management workflow extension. The template deploys the Consumption Logic App disabled, then onboarding performs these steps in order:
 
-1. Creates a single-tenant application registration whose Application ID URI host matches the Logic App callback host.
+1. Creates a single-tenant application registration whose Application ID URI host matches the Logic App callback host, checkpoints its exact object ID and app ID, and only reuses that recorded object on rerun. A same-named application or custom extension is never adopted. Existing environment IDs are accepted only once as migration hints after exact live verification, then durable state becomes the ownership authority.
 2. Configures the request trigger for OAuth only, validating the tenant issuer, the application client ID as the v2 token audience (and Application ID URI for v1 tokens), and PIM caller application `1c67c054-65c8-4f7f-92a1-eb7ba6e48627`.
 3. Grants the Logic App managed identity `User.RevokeSessions.All` and enables the workflow.
 4. Creates or updates two beta `roleManagementCustomCalloutExtension` objects for `entraRoles`: one `preApproval` and one `postApproval`.
@@ -189,7 +189,7 @@ The published preview documentation currently describes only pre-approval linkag
 
 The current beta create endpoint also requires a client-generated GUID `id`, although the preview documentation's request example omits it. The implementation supplies that GUID while retaining the documented Application ID URI in `authenticationConfiguration.resourceId`.
 
-This PIM feature is preview. Live testing confirmed that `postApproval` does not run for roles that have no human approval requirement. The automatic phase selection therefore uses pre-approval only when there is no later human denial risk, and post-approval when approval is required. PIM can deliver the same activation request more than once when retries are enabled, so extension actions must be idempotent and notification implementations must deduplicate on the request `id`. Repeating `revokeSignInSessions` is safe. A failure response includes the PIM request ID for portal-to-workflow correlation while retaining the extension-generated evaluation ID required by PIM. When an existing action group is supplied, an Azure Monitor metric alert watches the Logic App's `ActionsFailed` metric. Token revocation is not instantaneous, but a subsequent token acquisition can prompt the activating administrator to authenticate again. The default response is fail closed (`deny`) if revocation fails; fail open is an explicit option.
+This PIM feature is preview. Live testing confirmed that `postApproval` does not run for roles that have no human approval requirement. The automatic phase selection therefore uses pre-approval only when there is no later human denial risk, and post-approval when approval is required. PIM can deliver the same activation request more than once when retries are enabled, so extension actions must be idempotent and notification implementations must deduplicate on the request `id`. Repeating `revokeSignInSessions` is safe, but it invalidates the activating user's refresh tokens and browser session cookies across Microsoft Entra, not only the PIM page; propagation can take several minutes. A failure response includes the PIM request ID for portal-to-workflow correlation while retaining the extension-generated evaluation ID required by PIM. When an existing action group is supplied, an Azure Monitor metric alert watches the Logic App's `ActionsFailed` metric. The default response is fail closed (`deny`) if revocation fails; fail open is an explicit option. Run a selected-role pilot first and ensure the operator can complete broader reauthentication before enabling it widely.
 
 ## References
 

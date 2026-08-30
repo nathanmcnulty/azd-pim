@@ -34,10 +34,44 @@ $portalLinks = Get-AzdPimPortalLinks -TenantId ([guid]$plan.tenantId) -Subscript
 $receiptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'reports/azd-pim-deployment.json'
 
 function Write-DeploymentReceipt {
-    param([string] $AppliedReportPath)
+    param([string] $AppliedReportPath, [ValidateSet('core', 'polling', 'sessionRevocation')] [string] $OptionalFailurePhase)
 
-    $receipt = New-AzdPimDeploymentReceipt -Plan $plan -Configuration $configuration -PortalLinks $portalLinks -PlanReportPath $reportPath -AppliedReportPath $AppliedReportPath -AzureResources $azureResources
+    $receiptParameters = @{
+        Plan = $plan
+        Configuration = $configuration
+        PortalLinks = $portalLinks
+        PlanReportPath = $reportPath
+        AppliedReportPath = $AppliedReportPath
+        AzureResources = $azureResources
+    }
+    if (-not [string]::IsNullOrWhiteSpace($OptionalFailurePhase)) {
+        $receiptParameters.OptionalFailurePhase = $OptionalFailurePhase
+    }
+    $receipt = New-AzdPimDeploymentReceipt @receiptParameters
     $receipt | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM
+}
+
+function Write-AppliedReport {
+    param(
+        [ValidateSet('core', 'polling', 'sessionRevocation')] [string] $OptionalFailurePhase,
+        [bool] $CoreTenantConfigurationApplied = $true
+    )
+
+    $appliedReportPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'reports/azd-pim-applied.json'
+    [pscustomobject]@{
+        appliedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        tenantId = $plan.tenantId
+        deploymentStatus = if ($OptionalFailurePhase) { 'partial' } else { 'applied' }
+        coreTenantConfigurationApplied = $CoreTenantConfigurationApplied
+        optionalFailurePhase = $OptionalFailurePhase
+        privilegedRoles = @($plan.tiers.privileged.roles | Select-Object id, displayName, isPrivileged)
+        lessPrivilegedRoles = @($plan.tiers.lessPrivileged.roles | Select-Object id, displayName, isPrivileged)
+        contexts = if ($state) { $state.contexts } else { @() }
+        conditionalAccessPolicies = if ($state) { $state.conditionalAccessPolicies } else { @() }
+        optionalWorkflows = $optionalResults
+        portalLinks = $portalLinks
+    } | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $appliedReportPath -Encoding utf8NoBOM
+    return $appliedReportPath
 }
 
 function Write-PortalLinks {
@@ -55,43 +89,55 @@ if ($configuration.Mode -eq 'plan') {
     return
 }
 
-$state = Invoke-AzdPimApply -Plan $plan -ExistingState $existingState -Confirm:$false
-Save-AzdPimState -State $state
-
 $optionalResults = [ordered]@{}
-if ($configuration.NotificationMode -eq 'polling') {
-    if ([string]::IsNullOrWhiteSpace($env:AZD_PIM_POLLING_FUNCTION_NAME) -or [string]::IsNullOrWhiteSpace($env:AZD_PIM_POLLING_FUNCTION_PRINCIPAL_ID)) {
-        throw 'The polling Function App deployment outputs are missing.'
+$state = $existingState
+try {
+    $state = Invoke-AzdPimApply -Plan $plan -ExistingState $existingState -Confirm:$false -StateChanged {
+        param($checkpoint)
+        Save-AzdPimState -State $checkpoint
     }
-    Publish-AzdPimPollingFunction -FunctionAppName $env:AZD_PIM_POLLING_FUNCTION_NAME -FunctionPrincipalId $env:AZD_PIM_POLLING_FUNCTION_PRINCIPAL_ID -ResourceGroupName $env:AZURE_RESOURCE_GROUP
-    $optionalResults.pollingFunctionApp = $env:AZD_PIM_POLLING_FUNCTION_NAME
-} elseif ($configuration.NotificationMode -eq 'sentinel') {
-    $optionalResults.notificationMode = 'sentinel'
+    Save-AzdPimState -State $state
+} catch {
+    $state = Get-AzdPimState
+    $appliedReportPath = Write-AppliedReport -OptionalFailurePhase core -CoreTenantConfigurationApplied $false
+    Write-DeploymentReceipt -AppliedReportPath $appliedReportPath -OptionalFailurePhase core
+    Write-Warning 'Core PIM or Conditional Access configuration did not complete; a sanitized partial receipt was written before rethrowing.'
+    throw
 }
 
-if ($configuration.EnableSessionRevocation) {
-    if ([string]::IsNullOrWhiteSpace($env:AZD_PIM_REVOCATION_LOGIC_APP_RESOURCE_ID) -or [string]::IsNullOrWhiteSpace($env:AZD_PIM_REVOCATION_LOGIC_APP_PRINCIPAL_ID)) {
-        throw 'The session-revocation Logic App deployment outputs are missing.'
+$currentOptionalPhase = $null
+try {
+    if ($configuration.NotificationMode -eq 'polling') {
+        $currentOptionalPhase = 'polling'
+        if ([string]::IsNullOrWhiteSpace($env:AZD_PIM_POLLING_FUNCTION_NAME) -or [string]::IsNullOrWhiteSpace($env:AZD_PIM_POLLING_FUNCTION_PRINCIPAL_ID)) {
+            throw 'The polling Function App deployment outputs are missing.'
+        }
+        Publish-AzdPimPollingFunction -FunctionAppName $env:AZD_PIM_POLLING_FUNCTION_NAME -FunctionPrincipalId $env:AZD_PIM_POLLING_FUNCTION_PRINCIPAL_ID -ResourceGroupName $env:AZURE_RESOURCE_GROUP
+        $optionalResults.pollingFunctionApp = $env:AZD_PIM_POLLING_FUNCTION_NAME
+    } elseif ($configuration.NotificationMode -eq 'sentinel') {
+        $optionalResults.notificationMode = 'sentinel'
     }
-    $sessionRevocation = Initialize-AzdPimRevocationExtension -WorkflowResourceId $env:AZD_PIM_REVOCATION_LOGIC_APP_RESOURCE_ID -WorkflowPrincipalId $env:AZD_PIM_REVOCATION_LOGIC_APP_PRINCIPAL_ID -TenantId $plan.tenantId -EnvironmentName $env:AZURE_ENV_NAME
-    $scopedRoleRules = @($plan.tiers.privileged.roleRules) + @($plan.tiers.lessPrivileged.roleRules)
-    $sessionRevocation | Add-Member -NotePropertyName roleLinking -NotePropertyValue @(
-        Enable-AzdPimRevocationExtensionForRoles -RoleRules $scopedRoleRules -PreApprovalCustomExtensionId $sessionRevocation.preApprovalCustomExtensionId -PostApprovalCustomExtensionId $sessionRevocation.postApprovalCustomExtensionId
-    )
-    $optionalResults.sessionRevocation = $sessionRevocation
+
+    if ($configuration.EnableSessionRevocation) {
+        $currentOptionalPhase = 'sessionRevocation'
+        if ([string]::IsNullOrWhiteSpace($env:AZD_PIM_REVOCATION_LOGIC_APP_RESOURCE_ID) -or [string]::IsNullOrWhiteSpace($env:AZD_PIM_REVOCATION_LOGIC_APP_PRINCIPAL_ID)) {
+            throw 'The session-revocation Logic App deployment outputs are missing.'
+        }
+        $sessionRevocation = Initialize-AzdPimRevocationExtension -WorkflowResourceId $env:AZD_PIM_REVOCATION_LOGIC_APP_RESOURCE_ID -WorkflowPrincipalId $env:AZD_PIM_REVOCATION_LOGIC_APP_PRINCIPAL_ID -TenantId $plan.tenantId -EnvironmentName $env:AZURE_ENV_NAME -State $state -PersistState { param($checkpoint) Save-AzdPimState -State $checkpoint }
+        $scopedRoleRules = @($plan.tiers.privileged.roleRules) + @($plan.tiers.lessPrivileged.roleRules)
+        $sessionRevocation | Add-Member -NotePropertyName roleLinking -NotePropertyValue @(
+            Enable-AzdPimRevocationExtensionForRoles -RoleRules $scopedRoleRules -PreApprovalCustomExtensionId $sessionRevocation.preApprovalCustomExtensionId -PostApprovalCustomExtensionId $sessionRevocation.postApprovalCustomExtensionId
+        )
+        $optionalResults.sessionRevocation = $sessionRevocation
+    }
+} catch {
+    $appliedReportPath = Write-AppliedReport -OptionalFailurePhase $currentOptionalPhase
+    Write-DeploymentReceipt -AppliedReportPath $appliedReportPath -OptionalFailurePhase $currentOptionalPhase
+    Write-Warning "Core PIM and Conditional Access configuration was applied. Optional workflow '$currentOptionalPhase' failed; a sanitized partial receipt was written before rethrowing."
+    throw
 }
 
-$appliedReportPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'reports/azd-pim-applied.json'
-[pscustomobject]@{
-    appliedAt = [DateTimeOffset]::UtcNow.ToString('o')
-    tenantId = $plan.tenantId
-    privilegedRoles = @($plan.tiers.privileged.roles | Select-Object id, displayName, isPrivileged)
-    lessPrivilegedRoles = @($plan.tiers.lessPrivileged.roles | Select-Object id, displayName, isPrivileged)
-    contexts = $state.contexts
-    conditionalAccessPolicies = $state.conditionalAccessPolicies
-    optionalWorkflows = $optionalResults
-    portalLinks = $portalLinks
-} | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $appliedReportPath -Encoding utf8NoBOM
+$appliedReportPath = Write-AppliedReport
 
 Write-DeploymentReceipt -AppliedReportPath $appliedReportPath
 
