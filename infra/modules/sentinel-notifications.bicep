@@ -109,92 +109,66 @@ resource notificationWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
   }
 }
 
-resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
-  name: actionGroupName
-  location: 'Global'
-  tags: tags
-  properties: {
+module actionGroup '../vendor/Azd.AzureMonitorNotifications/logic-app-action-group.bicep' = {
+  name: 'pim-sentinel-action-group'
+  params: {
+    actionGroupName: actionGroupName
     groupShortName: 'PIM Entra'
-    enabled: true
-    logicAppReceivers: [
-      {
-        name: 'PIM activation Teams workflow'
-        resourceId: notificationWorkflow.id
-        callbackUrl: listCallbackUrl('${notificationWorkflow.id}/triggers/manual', '2019-05-01').value
-        useCommonAlertSchema: true
-      }
-    ]
+    logicAppResourceId: notificationWorkflow.id
+    receiverName: 'PIM activation Teams workflow'
+    logicAppTriggerName: 'manual'
+    tags: tags
   }
 }
 
-resource activationAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
-  name: alertRuleName
-  location: workspaceLocation
-  tags: tags
-  properties: {
+module activationAlert '../vendor/Azd.AzureMonitorNotifications/scheduled-query-alert.bicep' = {
+  name: 'pim-entra-activation-alert'
+  params: {
+    alertRuleName: alertRuleName
+    location: workspaceLocation
+    workspaceResourceId: workspaceResourceId
+    actionGroupResourceId: actionGroup.outputs.actionGroupResourceId
     displayName: 'Microsoft Entra PIM activation completed'
-    description: 'Sends successful Microsoft Entra PIM activations from an existing Sentinel or Log Analytics workspace to Teams.'
-    severity: 2
-    enabled: true
+    alertDescription: 'Sends successful Microsoft Entra PIM activations from an existing Sentinel or Log Analytics workspace to Teams.'
+    query: activationQuery
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
-    scopes: [
-      workspaceResourceId
-    ]
-    criteria: {
-      allOf: [
-        {
-          query: activationQuery
-          timeAggregation: 'Count'
-          operator: 'GreaterThan'
-          threshold: 0
-          failingPeriods: {
-            numberOfEvaluationPeriods: 1
-            minFailingPeriodsToAlert: 1
-          }
-          dimensions: [
-            {
-              name: 'ActivationEventId'
-              operator: 'Include'
-              values: [
-                '*'
-              ]
-            }
-            {
-              name: 'CorrelationId'
-              operator: 'Include'
-              values: [
-                '*'
-              ]
-            }
-            {
-              name: 'Actor'
-              operator: 'Include'
-              values: [
-                '*'
-              ]
-            }
-            {
-              name: 'Role'
-              operator: 'Include'
-              values: [
-                '*'
-              ]
-            }
-          ]
-        }
-      ]
-    }
     autoMitigate: true
-    actions: {
-      actionGroups: [
-        actionGroup.id
-      ]
-    }
+    dimensions: [
+      {
+        name: 'ActivationEventId'
+        operator: 'Include'
+        values: [
+          '*'
+        ]
+      }
+      {
+        name: 'CorrelationId'
+        operator: 'Include'
+        values: [
+          '*'
+        ]
+      }
+      {
+        name: 'Actor'
+        operator: 'Include'
+        values: [
+          '*'
+        ]
+      }
+      {
+        name: 'Role'
+        operator: 'Include'
+        values: [
+          '*'
+        ]
+      }
+    ]
+    tags: tags
   }
 }
 
 output logicAppName string = notificationWorkflow.name
 output logicAppResourceId string = notificationWorkflow.id
-output alertRuleResourceId string = activationAlert.id
-output actionGroupResourceId string = actionGroup.id
+output alertRuleResourceId string = activationAlert.outputs.alertRuleResourceId
+output actionGroupResourceId string = actionGroup.outputs.actionGroupResourceId
