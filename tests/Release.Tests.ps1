@@ -40,5 +40,37 @@ Describe 'Release artifacts' {
     It 'requires a semantic release version' {
         { & $script:releaseScript -Version 'latest' -OutputDirectory (Join-Path $TestDrive 'invalid') } |
             Should -Throw
+        { & $script:releaseScript -Version 'v01.2.3' -OutputDirectory (Join-Path $TestDrive 'leading-zero') } |
+            Should -Throw
+        { & $script:releaseScript -Version 'v1.2.3-01' -OutputDirectory (Join-Path $TestDrive 'numeric-prerelease') } |
+            Should -Throw
+    }
+
+    It 'keeps release publication behind protected main and the release environment' {
+        $workflow = Get-Content -LiteralPath (Join-Path $script:repositoryRoot '.github/workflows/release.yml') -Raw
+
+        $workflow | Should -Match '(?m)^  workflow_dispatch:'
+        $workflow | Should -Not -Match '(?m)^\s+tags:'
+        $workflow | Should -Match '(?m)^    environment: release$'
+        $workflow | Should -Match 'persist-credentials: false'
+        $workflow | Should -Match 'npm ci --ignore-scripts'
+        $workflow | Should -Not -Match '\$\{\{ github\.ref_name \}\}'
+        $workflow | Should -Match "GITHUB_REF -cne 'refs/heads/main'"
+        $workflow | Should -Match '--prerelease.*--latest=false'
+    }
+
+    It 'documents constrained provenance verification' {
+        $releaseGuide = Get-Content -LiteralPath (Join-Path $script:repositoryRoot 'docs/releasing.md') -Raw
+
+        foreach ($requiredArgument in @(
+            '--repo nathanmcnulty/azd-pim',
+            '--signer-workflow nathanmcnulty/azd-pim/.github/workflows/release.yml',
+            '--source-ref refs/heads/main',
+            '--source-digest',
+            '--signer-digest',
+            '--deny-self-hosted-runners'
+        )) {
+            $releaseGuide | Should -Match ([regex]::Escape($requiredArgument))
+        }
     }
 }
