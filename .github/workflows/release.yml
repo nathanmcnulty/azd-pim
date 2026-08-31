@@ -1,0 +1,107 @@
+name: Release azd-pim
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-azd-pim-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify release tag and commit
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ github.ref_name }}' -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw 'Release tags must use vMAJOR.MINOR.PATCH with an optional prerelease suffix.'
+          }
+          git fetch origin main --no-tags
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to fetch origin/main.' }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The tagged commit must be reachable from origin/main.' }
+
+      - name: Install PowerShell test dependencies
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-Module Pester -RequiredVersion 5.7.1 -Force -Scope CurrentUser
+          Install-Module Microsoft.Graph.Authentication -RequiredVersion 2.38.0 -Force -Scope CurrentUser
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/pim-notification-poller/package-lock.json
+
+      - name: Install polling Function dependencies
+        working-directory: src/pim-notification-poller
+        run: npm ci
+
+      - name: Install Bicep
+        run: az bicep install --version v0.46.1
+
+      - name: Validate release commit
+        run: ./scripts/Test-Repository.ps1
+
+      - name: Build deterministic archives
+        run: ./scripts/New-ReleaseArtifacts.ps1 -Version '${{ github.ref_name }}' -Commit '${{ github.sha }}'
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: src/pim-notification-poller
+          format: spdx-json
+          output-file: dist/azd-pim-${{ github.ref_name }}.spdx.json
+          syft-version: v1.51.1
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Finalize checksums
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -LiteralPath ./dist -File |
+            Where-Object Name -NE 'SHA256SUMS' |
+            Sort-Object Name
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          [IO.File]::WriteAllText(
+            (Join-Path $PWD 'dist/SHA256SUMS'),
+            (($lines -join "`n") + "`n"),
+            [Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.1.0
+        with:
+          subject-path: dist/*
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release create '${{ github.ref_name }}' ./dist/* `
+            --repo '${{ github.repository }}' `
+            --verify-tag `
+            --generate-notes `
+            --title "azd-pim ${{ github.ref_name }}"
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed.' }

@@ -49,6 +49,8 @@ Deployment validation follows the shared portfolio convention in [`docs/deployme
 
 For repository changes, run `./scripts/Test-Repository.ps1`. It parses the PowerShell source, runs the offline Pester and Node suites, restores Node dependencies from the local npm cache, and compiles the root Bicep template to stdout without connecting to a tenant.
 
+Release preparation and verification are documented in [`docs/releasing.md`](docs/releasing.md). Release automation packages only commits already merged to `main`; it does not authenticate to or modify Azure or Microsoft Graph.
+
 Tenant cleanup is opt-in. By default, `azd down` preserves Microsoft Entra configuration. Even with `AZD_PIM_REMOVE_TENANT_CONFIGURATION=true`, PIM role rules, authentication contexts, the session-revocation application registration and service principal, custom extensions, Graph permissions, and custom-extension role links are preserved. The cleanup path is limited to solution-created Conditional Access policies and restoration of adopted Conditional Access policies. This avoids silently weakening role activation after a role is removed from the template's current scope. Review the durable state and remove optional Entra resources manually only when their references have been deliberately detached.
 
 ## Start with a pilot
