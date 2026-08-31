@@ -51,7 +51,9 @@ Describe 'Release artifacts' {
 
         $workflow | Should -Match '(?m)^  workflow_dispatch:'
         $workflow | Should -Not -Match '(?m)^\s+tags:'
-        $workflow | Should -Match '(?m)^    environment: release$'
+        # Get-Content -Raw preserves CRLF, so anchor the assertion before the optional carriage return.
+        # Four spaces are intentional: this is the publish job-level environment, not a step field.
+        $workflow | Should -Match '(?m)^ {4}environment: release\r?$'
         $workflow | Should -Match 'persist-credentials: false'
         $workflow | Should -Match 'npm ci --ignore-scripts'
         $workflow | Should -Not -Match '\$\{\{ github\.ref_name \}\}'
