@@ -63,7 +63,7 @@ Describe 'PIM Azure Monitor notification boundary' {
             $source | Should -Match ([regex]::Escape($requiredQueryLine))
         }
 
-        $dimensionMatch = [regex]::Match($source, '(?s)dimensions:\s*\[(?<content>.*?)\n\s*\]\n\s*tags: tags')
+        $dimensionMatch = [regex]::Match($source, '(?s)dimensions:\s*\[(?<content>.*?)\r?\n\s*\]\r?\n\s*tags: tags')
         $dimensionMatch.Success | Should -BeTrue
         $actualDimensions = @([regex]::Matches($dimensionMatch.Groups['content'].Value, "name: '(?<name>[^']+)'")) |
             ForEach-Object { $_.Groups['name'].Value }
