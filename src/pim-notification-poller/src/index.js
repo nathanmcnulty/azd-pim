@@ -60,8 +60,8 @@ async function getManagedIdentityToken(resource) {
 }
 
 function stateBlobUrl() {
-  const account = requiredSetting('AZD_PIM_STORAGE_ACCOUNT_NAME');
-  const container = requiredSetting('AZD_PIM_STATE_CONTAINER');
+  const account = requiredSetting('AZD_POLLER_STORAGE_ACCOUNT_NAME');
+  const container = requiredSetting('AZD_POLLER_STATE_CONTAINER');
   return `https://${account}.blob.core.windows.net/${container}/pim-notification-watermark.json`;
 }
 

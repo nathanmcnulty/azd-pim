@@ -141,7 +141,7 @@ The scripts use Microsoft Graph PowerShell for every Graph request and Azure CLI
 
 The lifecycle hooks explicitly permit replacing a mismatched inherited Graph context because the expected account and tenant come from the selected Azure CLI user context. This avoids silently continuing as a different administrator. Optional permissions are not requested merely to avoid a possible future sign-in after configuration changes, so enabling a new optional workflow can require consent once on the next run. The plan fails on missing consent or directory roles rather than falling back to a weaker configuration.
 
-The vendored `graph-delegated-authentication` component and its exact source revision and SHA-256 hashes are recorded in `azd-components.lock.json`. Update the component from `azd-reference`; do not edit the managed files under `scripts/vendor/Azd.GraphAuthentication` locally.
+The vendored `graph-delegated-authentication` and `flex-scheduled-poller-host` components and their exact source revisions and SHA-256 hashes are recorded in `azd-components.lock.json`. Update them from `azd-reference`; do not edit managed files under `scripts/vendor` or `infra/vendor` locally.
 
 The notification envelope and delivery-result v1 schemas are also pinned from `azd-reference`, but remain data contracts rather than a shared notification runtime. Polling normalization, safe administrator-facing route results, idempotency, and the separate Sentinel adapter boundary are documented in [`docs/notification-contracts.md`](docs/notification-contracts.md).
 
@@ -174,7 +174,7 @@ Two isolated alternatives are available:
 
 Both choices are consumption-based and disabled by default. Sentinel is usually the better fit when the audit data already exists in a workspace. Polling avoids workspace ingestion requirements and should remain inexpensive in low-volume tenants, but it requires the Function managed identity to hold `AuditLog.Read.All` and has polling-interval latency. Distributed delivery cannot guarantee exactly once across a crash between the Teams response and watermark write, so every card includes the stable audit event ID and downstream handling must remain idempotent.
 
-The polling Function emits safe route-level contract results for success, baseline suppression, deduplication, and failure. These results contain stable identifiers and environment metadata, but never normalized PII data, recipients, destinations, webhook credentials, rendered cards, or raw provider responses. Sentinel preserves the same event identity but remains a Common Alert Schema to Logic App adapter until a safe durable result sink exists.
+The polling Function uses the independently versioned `flex-scheduled-poller-host` component at 512 MB with a one-instance ceiling and no always-ready instances. PIM keeps its Graph query, watermark, Teams delivery, and notification behavior solution-owned. The Function emits safe route-level contract results for success, baseline suppression, deduplication, and failure. These results contain stable identifiers and environment metadata, but never normalized PII data, recipients, destinations, webhook credentials, rendered cards, or raw provider responses. Sentinel preserves the same event identity but remains a Common Alert Schema to Logic App adapter until a safe durable result sink exists.
 
 ### Revoke activator sessions
 

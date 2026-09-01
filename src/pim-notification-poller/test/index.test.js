@@ -10,8 +10,8 @@ import {
 const managedSettings = [
   'AZD_PIM_POLLING_LOOKBACK_MINUTES',
   'AZD_PIM_POLLING_SEND_INITIAL_LOOKBACK',
-  'AZD_PIM_STATE_CONTAINER',
-  'AZD_PIM_STORAGE_ACCOUNT_NAME',
+  'AZD_POLLER_STATE_CONTAINER',
+  'AZD_POLLER_STORAGE_ACCOUNT_NAME',
   'AZD_PIM_TEAMS_WEBHOOK_URL',
   'IDENTITY_ENDPOINT',
   'IDENTITY_HEADER',
@@ -40,8 +40,8 @@ function setRequiredSettings(overrides = {}) {
   Object.assign(process.env, {
     AZD_PIM_POLLING_LOOKBACK_MINUTES: '30',
     AZD_PIM_POLLING_SEND_INITIAL_LOOKBACK: 'false',
-    AZD_PIM_STATE_CONTAINER: 'pim-state',
-    AZD_PIM_STORAGE_ACCOUNT_NAME: 'stateaccount',
+    AZD_POLLER_STATE_CONTAINER: 'pim-state',
+    AZD_POLLER_STORAGE_ACCOUNT_NAME: 'stateaccount',
     AZD_PIM_TEAMS_WEBHOOK_URL: 'https://teams.example.test/workflows/sensitive-signature',
     IDENTITY_ENDPOINT: 'http://identity.example.test/token',
     IDENTITY_HEADER: 'sensitive-identity-header',

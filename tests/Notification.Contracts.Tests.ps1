@@ -29,12 +29,30 @@ Describe 'PIM notification contract registration' {
     It 'provides the Function with canonical environment metadata settings' {
         $template = Get-Content -LiteralPath (Join-Path $script:templateRoot 'infra/modules/polling-function.bicep') -Raw
 
-        foreach ($name in 'AZURE_ENV_NAME', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'AZURE_RESOURCE_GROUP') {
-            $template | Should -Match ([regex]::Escape("name: '$name'"))
+        foreach ($name in 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'AZURE_RESOURCE_GROUP') {
+            $template | Should -Match ([regex]::Escape("${name}:"))
         }
-        $template | Should -Match 'value: tenant\(\)\.tenantId'
-        $template | Should -Match 'value: subscription\(\)\.subscriptionId'
-        $template | Should -Match 'value: resourceGroup\(\)\.name'
+        $template | Should -Match 'AZURE_TENANT_ID: tenant\(\)\.tenantId'
+        $template | Should -Match 'AZURE_SUBSCRIPTION_ID: subscription\(\)\.subscriptionId'
+        $template | Should -Match 'AZURE_RESOURCE_GROUP: resourceGroup\(\)\.name'
+        $hostTemplate = Get-Content -LiteralPath (Join-Path $script:templateRoot 'infra/vendor/Azd.FlexScheduledPoller/flex-scheduled-poller-host.bicep') -Raw
+        $hostTemplate | Should -Match "name: 'AZURE_ENV_NAME'"
+    }
+
+    It 'adopts the right-sized reusable poller host without replacing durable state' {
+        $template = Get-Content -LiteralPath (Join-Path $script:templateRoot 'infra/modules/polling-function.bicep') -Raw
+        $hostTemplate = Get-Content -LiteralPath (Join-Path $script:templateRoot 'infra/vendor/Azd.FlexScheduledPoller/flex-scheduled-poller-host.bicep') -Raw
+
+        $template | Should -Match "module pollerHost '../vendor/Azd\.FlexScheduledPoller/flex-scheduled-poller-host\.bicep'"
+        $template | Should -Match "stateContainerName: 'pim-state'"
+        $template | Should -Match "deploymentContainerName: 'function-releases'"
+        $template | Should -Match 'blobDeleteRetentionDays: 7'
+        $template | Should -Match 'instanceMemoryMB: 512'
+        $template | Should -Match 'maximumInstanceCount: 1'
+        $template | Should -Match "'AZD_PIM_STORAGE_ACCOUNT_NAME'"
+        $template | Should -Match "'AZD_PIM_STATE_CONTAINER'"
+        $template | Should -Not -Match "resource\s+\w+\s+'Microsoft\.(?:Web|Storage|Authorization)/"
+        $hostTemplate | Should -Match 'alwaysReady: \[\]'
     }
 
     It 'accepts the Graph directory-audit activation envelope' {
