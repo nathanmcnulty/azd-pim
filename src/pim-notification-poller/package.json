@@ -9,7 +9,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@azure/functions": "4.16.2"
+    "@azure/functions": "4.16.5"
   },
   "engines": {
     "node": ">=22"
