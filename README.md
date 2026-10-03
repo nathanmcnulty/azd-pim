@@ -106,7 +106,7 @@ Use role **definition IDs**, not assignment IDs or display names. Until azd-gui 
 | `AZD_PIM_SENTINEL_WORKSPACE_RESOURCE_ID` | empty | Existing workspace with Entra `AuditLogs`; required for `sentinel`. |
 | `AZD_PIM_SENTINEL_WORKSPACE_LOCATION` | empty | Region of the existing workspace; required for the scheduled-query alert. |
 | `AZD_PIM_POLLING_SCHEDULE` | `0 */5 * * * *` | Flex Consumption Function NCRONTAB schedule. |
-| `AZD_PIM_POLLING_LOOKBACK_MINUTES` | `30` | Rolling audit window used with durable event-ID deduplication. |
+| `AZD_PIM_POLLING_LOOKBACK_MINUTES` | `30` | Normal rolling audit window used with durable event-ID deduplication; missed runs replay from the last successful query for up to 24 hours. |
 | `AZD_PIM_POLLING_SEND_INITIAL_LOOKBACK` | `false` | Send recent events on first run instead of only seeding the watermark. |
 | `AZD_PIM_ENABLE_SESSION_REVOCATION` | `false` | Deploy, onboard, and link preview revocation extensions to every role in scope, selecting the safe activation phase automatically. |
 | `AZD_PIM_REVOCATION_FAILURE_BEHAVIOR` | `deny` | `deny` or `approve` when revocation fails. |
@@ -172,7 +172,7 @@ The Office 365 Management Activity API design is intentionally excluded because 
 Two isolated alternatives are available:
 
 - `sentinel`: reuses an existing Microsoft Sentinel or Log Analytics workspace, deploys a stateful scheduled-query alert dimensioned by the stable audit event ID for successful `Add member to role completed (PIM activation)` events, and sends the common alert payload through a small Consumption Logic App to a Teams Workflow webhook. Entra audit log routing is a prerequisite and is not changed by this solution.
-- `polling`: deploys a single-instance Flex Consumption Function App that periodically queries Microsoft Graph directory audits. It stores recent event IDs in Blob Storage, persists each successful delivery immediately, uses a rolling lookback for delayed audit arrival, and avoids posting existing events on the first run unless explicitly requested.
+- `polling`: deploys a single-instance Flex Consumption Function App that periodically queries Microsoft Graph directory audits. It stores recent event IDs and the last successful query time in Blob Storage, persists each successful delivery immediately, replays missed runs for up to 24 hours, and avoids posting existing events on the first run unless explicitly requested. If an outage exceeds 24 hours or the prior state has no reliable query watermark, it retains a `recoveryGap` in state and emits `AZD_POLLER_RECOVERY_GAP` on each run. Investigate that interval in directory audit logs; the poller cannot prove which notifications were missed. An event volume beyond the 10,000-ID state limit stops before delivery and leaves the query watermark unchanged for operator intervention.
 
 Both choices are consumption-based and disabled by default. Sentinel is usually the better fit when the audit data already exists in a workspace. Polling avoids workspace ingestion requirements and should remain inexpensive in low-volume tenants, but it requires the Function managed identity to hold `AuditLog.Read.All` and has polling-interval latency. Distributed delivery cannot guarantee exactly once across a crash between the Teams response and watermark write, so every card includes the stable audit event ID and downstream handling must remain idempotent.
 

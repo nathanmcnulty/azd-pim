@@ -4,6 +4,7 @@ import { afterEach, test } from 'node:test';
 import {
   createIdempotencyKey,
   normalizePimActivation,
+  planPimRecoveryWindow,
   pollPimActivations,
 } from '../src/index.js';
 
@@ -257,6 +258,32 @@ test('rejects an invalid lookback before making any network request', async () =
   assert.equal(fetchCalled, false);
 });
 
+test('plans bounded recovery from the last successful query and marks an older gap', () => {
+  const now = new Date('2026-08-23T12:00:00Z');
+  const recent = planPimRecoveryWindow(now, 30, {
+    exists: true, value: { lastSuccessfulQueryAt: '2026-08-23T09:00:00Z' },
+  });
+  assert.equal(recent.since.toISOString(), '2026-08-23T08:55:00.000Z');
+  assert.equal(recent.gap, null);
+  const old = planPimRecoveryWindow(now, 30, {
+    exists: true, value: { lastSuccessfulQueryAt: '2026-08-21T12:00:00Z' },
+  });
+  assert.equal(old.since.toISOString(), '2026-08-22T12:00:00.000Z');
+  assert.deepEqual(old.gap, {
+    reason: 'recoveryLimitExceeded', from: '2026-08-21T12:00:00.000Z',
+    to: '2026-08-22T12:00:00.000Z', detectedAt: now.toISOString(),
+  });
+});
+
+test('treats an old legacy run timestamp as an unknown coverage gap', () => {
+  const now = new Date('2026-08-23T12:00:00Z');
+  const window = planPimRecoveryWindow(now, 30, {
+    exists: true, value: { lastRunAt: '2026-08-23T09:00:00Z' },
+  });
+  assert.equal(window.since.toISOString(), '2026-08-22T12:00:00.000Z');
+  assert.equal(window.gap.reason, 'missingWatermark');
+});
+
 test('establishes a first-run watermark without sending historical activations', async () => {
   setRequiredSettings();
   const matching = activation('baseline-event', '2026-08-23T12:00:00.000Z');
@@ -354,6 +381,60 @@ test('follows Graph pagination, filters and sorts events, maps cards, and advanc
 
   const observableOutput = JSON.stringify({ logs, states: writes.map((call) => JSON.parse(call.body)) });
   assert.doesNotMatch(observableOutput, /sensitive-signature|sensitive-graph-token|sensitive-storage-token|sensitive-identity-header/);
+});
+
+test('replays an outage and advances the query watermark only after all deliveries finish', async () => {
+  setRequiredSettings();
+  const prior = new Date(Date.now() - 3 * 60 * 60_000);
+  const event = activation('recovered-event', new Date(prior.getTime() + 60 * 60_000).toISOString());
+  const harness = createHarness({
+    readState: { exists: true, etag: 'etag-0', value: { recent: [], lastSuccessfulQueryAt: prior.toISOString() } },
+    graphPages: [{ value: [event] }],
+    writeResponses: ['etag-after-event', 'etag-final'],
+  });
+  const { context, logs } = contextCapture();
+  await pollPimActivations(null, context);
+
+  const graph = callsTo(harness, (call) => call.url.startsWith('https://graph.microsoft.com/'));
+  const filter = new URL(graph[0].url).searchParams.get('$filter');
+  const since = Date.parse(filter.replace('activityDateTime ge ', ''));
+  assert.ok(Math.abs(since - (prior.getTime() - 5 * 60_000)) < 5_000);
+  const writes = callsTo(harness, (call) => call.method === 'PUT').map((call) => JSON.parse(call.body));
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0].lastSuccessfulQueryAt, prior.toISOString());
+  assert.ok(Date.parse(writes[1].lastSuccessfulQueryAt) > prior.getTime());
+  assert.equal(writes[1].recoveryGap, null);
+  assert.equal(logs.some((entry) => entry.startsWith('AZD_POLLER_RECOVERY_GAP ')), false);
+});
+
+test('persists an unfillable outage gap and logs a safe warning', async () => {
+  setRequiredSettings();
+  const prior = new Date(Date.now() - 2 * 24 * 60 * 60_000);
+  const harness = createHarness({
+    readState: { exists: true, etag: 'etag-0', value: { recent: [], lastSuccessfulQueryAt: prior.toISOString() } },
+  });
+  const { context, logs } = contextCapture();
+  await pollPimActivations(null, context);
+  const written = JSON.parse(callsTo(harness, (call) => call.method === 'PUT')[0].body);
+  assert.equal(written.recoveryGap.reason, 'recoveryLimitExceeded');
+  assert.ok(written.recoveryGap.from < written.recoveryGap.to);
+  assert.equal(logs.filter((entry) => entry.startsWith('AZD_POLLER_RECOVERY_GAP ')).length, 1);
+  assert.doesNotMatch(JSON.stringify(logs), /sensitive-graph-token|sensitive-storage-token|sensitive-signature/);
+});
+
+test('stops before sending when replay would evict active deduplication IDs', async () => {
+  setRequiredSettings();
+  const now = new Date().toISOString();
+  const recent = Array.from({ length: 10000 }, (_, index) => ({ id: `prior-${index}`, seenAt: now }));
+  const harness = createHarness({
+    readState: { exists: true, etag: 'etag-0', value: { recent, lastSuccessfulQueryAt: now } },
+    graphPages: [{ value: [activation('one-more', now)] }],
+  });
+  const { context } = contextCapture();
+
+  await assert.rejects(pollPimActivations(null, context), /event state limit/);
+  assert.equal(callsTo(harness, (call) => call.url.includes('teams.example.test')).length, 0);
+  assert.equal(callsTo(harness, (call) => call.method === 'PUT').length, 0);
 });
 
 test('deduplicates previously seen events and drops expired watermark entries', async () => {

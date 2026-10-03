@@ -7,6 +7,9 @@ const graphBase = 'https://graph.microsoft.com/v1.0';
 const activationOperation = 'Add member to role completed (PIM activation)';
 const activationEventType = 'entra.pim.roleActivated';
 const activationSource = 'microsoftGraph.directoryAudit';
+const minuteMs = 60_000;
+const maxReplayMinutes = 1440;
+const maxRecentIds = 10000;
 const teamsRoute = Object.freeze({
   id: 'admin-primary',
   audience: 'admin',
@@ -23,6 +26,48 @@ function requiredSetting(name) {
 
 function optionalSetting(name) {
   return process.env[name]?.trim() || null;
+}
+
+export function planPimRecoveryWindow(now, lookbackMinutes, stored) {
+  const normalSince = now.getTime() - lookbackMinutes * minuteMs;
+  const oldestRecoverable = now.getTime() - maxReplayMinutes * minuteMs;
+  if (!stored.exists) return { since: new Date(normalSince), gap: null };
+  const checkpoint = stored.value.lastSuccessfulQueryAt;
+  const last = checkpoint ? Date.parse(checkpoint) : Number.NaN;
+  if (!Number.isFinite(last) || last > now.getTime()) {
+    const legacy = Date.parse(stored.value.lastRunAt);
+    const recentLegacy = Number.isFinite(legacy) && legacy >= normalSince && legacy <= now.getTime();
+    return {
+      since: new Date(recentLegacy ? normalSince : oldestRecoverable),
+      gap: recentLegacy
+        ? null : { reason: 'missingWatermark', detectedAt: now.toISOString() },
+    };
+  }
+  const gap = last < oldestRecoverable
+    ? { reason: 'recoveryLimitExceeded', from: new Date(last).toISOString(), to: new Date(oldestRecoverable).toISOString(), detectedAt: now.toISOString() }
+    : null;
+  return { since: new Date(Math.max(oldestRecoverable, Math.min(normalSince, last - 5 * minuteMs))), gap };
+}
+
+function retainRecoveryGap(existing, detected, now) {
+  if (existing && existing.reason === 'recoveryLimitExceeded') {
+    const from = Date.parse(existing.from);
+    const to = Date.parse(existing.to);
+    existing = Number.isFinite(from) && Number.isFinite(to) && from <= to
+      ? { reason: 'recoveryLimitExceeded', from: new Date(from).toISOString(), to: new Date(to).toISOString(), detectedAt: now.toISOString() }
+      : { reason: 'missingWatermark', detectedAt: now.toISOString() };
+  } else if (existing) {
+    existing = { reason: 'missingWatermark', detectedAt: now.toISOString() };
+  }
+  if (!detected) return existing ?? null;
+  if (!existing) return detected;
+  if (existing.reason === 'missingWatermark' || detected.reason === 'missingWatermark') return { reason: 'missingWatermark', detectedAt: now.toISOString() };
+  return {
+    reason: 'recoveryLimitExceeded',
+    from: existing.from < detected.from ? existing.from : detected.from,
+    to: existing.to > detected.to ? existing.to : detected.to,
+    detectedAt: now.toISOString(),
+  };
 }
 
 async function safeFetch(url, init, failureMessage) {
@@ -368,26 +413,34 @@ export async function pollPimActivations(_timer, context) {
   }
 
   const now = new Date();
-  const since = new Date(now.getTime() - lookbackMinutes * 60_000);
   const [graphToken, storageToken] = await Promise.all([
     getManagedIdentityToken(graphResource),
     getManagedIdentityToken(storageResource),
   ]);
   const stored = await readState(storageToken);
+  const recovery = planPimRecoveryWindow(now, lookbackMinutes, stored);
+  const recoveryGap = retainRecoveryGap(stored.value.recoveryGap, recovery.gap, now);
   const recent = Array.isArray(stored.value.recent) ? stored.value.recent : [];
   const seenIds = new Set(recent.map((item) => item.id));
-  const activations = await getDirectoryAudits(graphToken, since);
+  const activations = await getDirectoryAudits(graphToken, recovery.since);
   const normalizedEnvelopes = activations.map((event) => normalizePimActivation(event));
   const envelopes = [...new Map(
     normalizedEnvelopes.map((envelope) => [envelope.eventId, envelope]),
   ).values()];
+  if (envelopes.length > maxRecentIds) {
+    throw new Error(`PIM activation replay exceeded the ${maxRecentIds} event safety limit; the query watermark was not advanced.`);
+  }
+  if (recoveryGap) context.log(`AZD_POLLER_RECOVERY_GAP ${JSON.stringify(recoveryGap)}`);
   const unseen = envelopes.filter((envelope) => !seenIds.has(envelope.eventId));
   const sendInitial = process.env.AZD_PIM_POLLING_SEND_INITIAL_LOOKBACK?.toLowerCase() === 'true';
   const deliver = stored.exists || sendInitial ? unseen : [];
   const deliveryResults = [];
-  const retentionStart = new Date(now.getTime() - Math.max(lookbackMinutes * 2, 60) * 60_000);
+  const retentionStart = new Date(now.getTime() - Math.max(maxReplayMinutes, lookbackMinutes * 2) * minuteMs);
   let currentEtag = stored.etag;
   let nextRecent = recent.filter((item) => new Date(item.seenAt) >= retentionStart);
+  if (nextRecent.length + unseen.length > maxRecentIds) {
+    throw new Error(`PIM activation replay exceeded the ${maxRecentIds} event state limit; no delivery was attempted and the query watermark was not advanced.`);
+  }
 
   for (const envelope of envelopes.filter((item) => seenIds.has(item.eventId))) {
     recordDeliveryResult(context, deliveryResults, newDeliveryResult(envelope, 'alreadyDelivered'));
@@ -408,10 +461,11 @@ export async function pollPimActivations(_timer, context) {
     }
     seenIds.add(envelope.eventId);
     nextRecent.push({ id: envelope.eventId, seenAt: now.toISOString() });
-    nextRecent = nextRecent.slice(-2000);
     currentEtag = await writeState(storageToken, {
       schemaVersion: '1.0',
       lastRunAt: now.toISOString(),
+      ...(stored.value.lastSuccessfulQueryAt ? { lastSuccessfulQueryAt: stored.value.lastSuccessfulQueryAt } : {}),
+      recoveryGap,
       recent: nextRecent,
     }, currentEtag);
   }
@@ -422,10 +476,12 @@ export async function pollPimActivations(_timer, context) {
       id: envelope.eventId,
       seenAt: now.toISOString(),
     })),
-  ].slice(-2000);
+  ];
   await writeState(storageToken, {
     schemaVersion: '1.0',
     lastRunAt: now.toISOString(),
+    lastSuccessfulQueryAt: now.toISOString(),
+    recoveryGap,
     recent: nextRecent,
   }, currentEtag);
 
