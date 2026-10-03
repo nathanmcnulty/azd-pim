@@ -1,0 +1,215 @@
+{
+  "schemaVersion": "1.0.0",
+  "repository": "nathanmcnulty/azd-pim",
+  "sourceRevision": "8a3c5ec97034fcadbd79533e9aea39fb28ad8e27",
+  "capturedAt": "2026-10-03",
+  "items": [
+    {
+      "id": "PIM-001",
+      "title": "Reconcile this backlog with current source and active work",
+      "kind": "discovery",
+      "priority": "P1",
+      "status": "ready",
+      "wave": 0,
+      "problem": "Plans and implementation evidence are spread across files; the captured source can change while other tasks work.",
+      "scope": [
+        "docs/backlog.json",
+        "docs/backlog.md",
+        "Existing roadmap, execution status, open issues and pull requests (read-only)"
+      ],
+      "acceptance": [
+        "Classify each candidate as implemented, still open, superseded or awaiting evidence; retain source links and reasons.",
+        "Inspect dirty state, remotes, worktrees and local environment presence without reading secrets; avoid duplicate work with active owners.",
+        "Resolve the actual offline validation commands and record exact current default-branch/working-tree provenance; do not copy historical live passes to newer code."
+      ],
+      "validation": [
+        "git status --short",
+        "git remote -v",
+        "git worktree list --porcelain",
+        "Read the applicable instructions and validation workflow; read gh issue list and gh pr list for the named repository using nathanmcnulty. Do not create or modify issues/PRs."
+      ],
+      "dependencies": [],
+      "authorization": "local-only",
+      "components": [],
+      "sources": [
+        "README.md",
+        "https://github.com/nathanmcnulty/azd-pim/pull/13"
+      ],
+      "evidence": [],
+      "blocker": null
+    },
+    {
+      "id": "PIM-002",
+      "title": "Qualify a selected-role authentication and notification pilot",
+      "kind": "verification",
+      "priority": "P1",
+      "status": "proposed",
+      "wave": 2,
+      "problem": "The Graph beta extension, fresh-auth callback and optional revocation/delivery need exact selected-role evidence.",
+      "scope": [
+        "docs/",
+        "scripts/",
+        "tests/"
+      ],
+      "acceptance": [
+        "Begin in plan mode and verify empty lists manage none; preserve justification, ticketing and unrelated role settings.",
+        "Record actual activation, auth-context demand, callback and recipient receipt for enabled optional routes.",
+        "Test failed context attachment MFA restoration and explicit rollback; revocation/re-auth is a separate authorized feature."
+      ],
+      "validation": [
+        "From the solution root run ./scripts/Test-Repository.ps1",
+        "Run focused tests for changed behavior from tests/; fixtures do not prove live-service or endpoint behavior.",
+        "After separate authorization, retain redacted exact-target live evidence and cleanup results outside public Git. Do not execute live operations from this backlog alone."
+      ],
+      "dependencies": [],
+      "authorization": "tenant-write",
+      "components": [],
+      "sources": [
+        "README.md"
+      ],
+      "evidence": [],
+      "blocker": null
+    },
+    {
+      "id": "PIM-003",
+      "title": "Reconcile the active Flex vendored-file provenance fix",
+      "kind": "discovery",
+      "priority": "P1",
+      "status": "ready",
+      "wave": 0,
+      "problem": "The current checkout has a changed vendored Flex module and .gitattributes; another task owns the correction.",
+      "scope": [
+        ".gitattributes",
+        "infra/vendor/Azd.FlexScheduledPoller/flex-scheduled-poller-host.bicep",
+        "azd-components.lock.json"
+      ],
+      "acceptance": [
+        "Read the active owner handoff and exact source/lock hash before assigning follow-up.",
+        "Do not normalize or overwrite the vendor diff as part of backlog adoption.",
+        "Record whether canonical version bump, local repair or no further work is required."
+      ],
+      "validation": [
+        "git diff -- .gitattributes infra/vendor/Azd.FlexScheduledPoller/flex-scheduled-poller-host.bicep",
+        "git worktree list --porcelain"
+      ],
+      "dependencies": [],
+      "authorization": "local-only",
+      "components": [
+        "flex-scheduled-poller-host"
+      ],
+      "sources": [
+        "azd-components.lock.json"
+      ],
+      "evidence": [],
+      "blocker": null
+    },
+    {
+      "id": "PIM-004",
+      "title": "Improve optional poller/alert health with exact delivery semantics",
+      "kind": "maintenance",
+      "priority": "P2",
+      "status": "proposed",
+      "wave": 2,
+      "problem": "The repo already adopts Flex/Azure Monitor components; health and optional-path behavior are the useful next step.",
+      "scope": [
+        "scripts/",
+        "src/",
+        "infra/",
+        "docs/",
+        "azd-permissions.json"
+      ],
+      "acceptance": [
+        "Test missed polling windows, retryable/ambiguous send outcomes and callback failure without broadening role scope.",
+        "Separate scheduled-query alerts from Sentinel analytics and keep KQL/card content solution-owned.",
+        "Disabled notification paths add no resources or grants; compare current pins and state compatibility before updates."
+      ],
+      "validation": [
+        "From the solution root run ./scripts/Test-Repository.ps1",
+        "Run focused tests for changed behavior from tests/; fixtures do not prove live-service or endpoint behavior."
+      ],
+      "dependencies": [],
+      "authorization": "local-only",
+      "components": [
+        "deployment-validation",
+        "notification-contracts",
+        "flex-scheduled-poller-host",
+        "azure-monitor-scheduled-query-notifications"
+      ],
+      "sources": [
+        "README.md"
+      ],
+      "evidence": [],
+      "blocker": null
+    },
+    {
+      "id": "PIM-005",
+      "title": "Adopt deployment-validation 1.1.1 while preserving PIM report compatibility",
+      "kind": "maintenance",
+      "priority": "P1",
+      "status": "done",
+      "wave": 1,
+      "problem": "The captured consumer lock used stable1.0.0; the selected update adopts the reviewed immutable1.1.1 release without activating new evidence-binding behavior.",
+      "scope": [
+        "azd-components.lock.json",
+        "scripts/vendor/Azd.DeploymentValidation/",
+        "tests/",
+        "docs/"
+      ],
+      "acceptance": [
+        "Review the exact 1.0.0-to-1.1.1 diff and current consumer hashes before deciding to adopt.",
+        "Prepare only the compatible managed files and lock in one owned worktree; retain domain validation extensions.",
+        "Offline validation and commit-only rollback are required; live deployment and publication are separately authorized."
+      ],
+      "validation": [
+        "pwsh -File ./scripts/Test-Repository.ps1",
+        "Verify the three managed deployment-validation files against the exact immutable lock hashes; preserve all unrelated components.",
+        "Run the repository-specific plan/schema compatibility check with provider commands mocked or forbidden; no live deployment or delivery is implied by this vendoring update."
+      ],
+      "dependencies": [],
+      "authorization": "local-only",
+      "components": [
+        "deployment-validation"
+      ],
+      "sources": [
+        "azd-components.lock.json"
+      ],
+      "evidence": [
+        "Selected for compatible component-only 1.1.1 adoption after read-only triage proved exact existing 1.0.0 managed hashes and unchanged PIM adapter. Canonical Flex vendor and gitattributes drift are preserved; fresh main base32def67 already contains its independent provenance fix. Schema1.1 evidence binding is outside this packet.",
+        "Independent five-file review passed manifestfc65c16f43f69a0185e90e1b9b8aa94f400559af0042a3e8908f69a2c835f715 at consumer base32def67fcdc4eac9a18f6c86a90183966169677c. Managed bytes match reviewed signed release1.1.1 at0c96cc89c554ffc3b3ca82ceda12da6591e816c1. Existing PIM adapter remains unchanged; a regression assertion preserves schema1.0 output.",
+        "Author, independent reviewer and integrated canonical validation passed focused21/21, full121/121 Pester plus14/14 Node, parsing, audit0, Bicep and component drift. PSSA had0 errors; the pure-constructor naming warning in immutable vendor bytes was preserved. Canonical Flex-host and attribute edits were preserved byte-for-byte during integration. Reviewed central desiredVersion update passed47/47 focused tests. No cloud or notification operation was needed.",
+        "Integrated locally after target/base checks; the template remains independently deployable. Release and evidence-binding feature adoption remain separate tasks."
+      ],
+      "blocker": null,
+      "claim": null
+    },
+    {
+      "id": "PIM-006",
+      "title": "Record missed-event recovery gaps after outages beyond the polling lookback",
+      "kind": "discovery",
+      "priority": "P1",
+      "status": "proposed",
+      "wave": 0,
+      "problem": "Open report captured 2026-10-03 during execution reconciliation. Another code-quality task may own an active fix; inspect its PR and current source before dispatch.",
+      "scope": [
+        "Linked issue and current source (read-only)",
+        "Repository-local backlog evidence"
+      ],
+      "acceptance": [
+        "Read the linked issue and current default branch; classify the exact defect, current owner and evidence gap.",
+        "Record a current PR or verified resolution before selecting any implementation; preserve broader feature and live acceptance gates."
+      ],
+      "validation": [
+        "Read current issue and PR state using nathanmcnulty; do not modify or close issues during reconciliation.",
+        "Inspect dirty state and worktrees; resolve the exact current revision and relevant offline commands before implementation."
+      ],
+      "dependencies": [],
+      "authorization": "local-only",
+      "components": [],
+      "sources": [
+        "https://github.com/nathanmcnulty/azd-pim/issues/16"
+      ],
+      "evidence": [],
+      "blocker": null
+    }
+  ]
+}
