@@ -95,6 +95,7 @@ Describe 'azd-pim deployment validation definitions' {
         $report = & (Join-Path $PSScriptRoot '../scripts/Test-Deployment.ps1') -Plan -PassThru -OutputPath $relativeOutputPath
 
         $report.template.name | Should -Be 'azd-pim'
+        $report.schemaVersion | Should -Be '1.0'
         $report.mode | Should -Be 'plan'
         @($report.checks | Where-Object status -ne 'planned').Count | Should -Be 0
         (Get-Content -LiteralPath $outputPath -Raw) | Test-Json `
