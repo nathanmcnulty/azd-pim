@@ -10,6 +10,8 @@ const activationSource = 'microsoftGraph.directoryAudit';
 const minuteMs = 60_000;
 const maxReplayMinutes = 1440;
 const maxRecentIds = 10000;
+// One callback attempt must finish well inside the five-minute polling cadence.
+const callbackDeadlineMs = 10_000;
 const teamsRoute = Object.freeze({
   id: 'admin-primary',
   audience: 'admin',
@@ -365,23 +367,46 @@ async function sendTeamsNotification(envelope) {
       },
     });
   }
+  try {
+    const destination = new URL(webhookUrl);
+    if (destination.protocol !== 'https:' || destination.username || destination.password
+      || webhookUrl.includes('#') || /^https:\/\/[^/]*@/iu.test(webhookUrl)
+      || /[\s\u0000-\u001f\u007f]/u.test(webhookUrl)) {
+      throw new Error('Invalid destination');
+    }
+  } catch {
+    return newDeliveryResult(envelope, 'failed', {
+      attempt: 0,
+      durationMs: Date.now() - startedAt,
+      failure: { category: 'invalidRequest', retryable: false, code: 'TeamsDestinationInvalid' },
+    });
+  }
   let response;
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), callbackDeadlineMs);
   try {
     response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(renderTeamsCard(envelope)),
+      redirect: 'manual',
+      signal: controller.signal,
     });
   } catch {
     return newDeliveryResult(envelope, 'failed', {
       attempt: 1,
       durationMs: Date.now() - startedAt,
       failure: {
-        category: 'destinationUnavailable',
+        // No response cannot establish whether the receiver accepted the POST.
+        category: controller.signal.aborted ? 'timeout' : 'unknown',
         retryable: true,
-        code: 'TeamsTransportError',
+        code: controller.signal.aborted ? 'TeamsAcknowledgementTimeout' : 'TeamsTransportError',
       },
     });
+  } finally {
+    // Provider bodies are neither needed nor trusted for acknowledgement evidence.
+    try { void response?.body?.cancel().catch(() => {}); } catch { /* Never expose provider errors. */ }
+    clearTimeout(deadline);
   }
   if (!response.ok) {
     return newDeliveryResult(envelope, 'failed', {

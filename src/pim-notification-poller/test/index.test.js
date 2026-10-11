@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createServer } from 'node:https';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import {
   createIdempotencyKey,
@@ -604,7 +610,7 @@ test('turns a transport exception into a retryable result without leaking the de
   const results = deliveryResultsFromLogs(logs);
   assert.equal(results.length, 1);
   assert.deepEqual(results[0].failure, {
-    category: 'destinationUnavailable',
+    category: 'unknown',
     retryable: true,
     code: 'TeamsTransportError',
   });
@@ -670,4 +676,125 @@ test('records a blank webhook as destination unavailable before throwing without
   assert.deepEqual(results[0].evidence, {});
   assertAdministratorSafe(results[0]);
   assert.equal(callsTo(harness, (call) => call.method === 'PUT').length, 0);
+});
+
+test('refuses invalid callback destinations before POST and watermark advance', async () => {
+  for (const destination of ['http://teams.example.test/hook', 'https://user:secret@teams.example.test/hook',
+    'https://@teams.example.test/hook', 'https://teams.example.test/hook#',
+    'https://teams.example.test/ho\tok', 'not-a-url']) {
+    setRequiredSettings({ AZD_PIM_TEAMS_WEBHOOK_URL: destination });
+    const harness = createHarness({ graphPages: [{ value: [activation('invalid-destination', new Date().toISOString())] }] });
+    const { context, logs } = contextCapture();
+    await assert.rejects(pollPimActivations(null, context), /TeamsDestinationInvalid/);
+    const result = deliveryResultsFromLogs(logs)[0];
+    assert.equal(result.attempt, 0);
+    assert.equal(result.failure.retryable, false);
+    assert.equal(result.failure.category, 'invalidRequest');
+    assertAdministratorSafe(result);
+    assert.equal(callsTo(harness, (call) => call.method === 'POST' || call.method === 'PUT').length, 0);
+  }
+});
+
+test('actual local TLS callback acknowledgement boundaries preserve replay and privacy', { timeout: 45_000 }, async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'azd-pim-callback-'));
+  const certificatePath = join(directory, 'localhost.pem');
+  const keyPath = join(directory, 'localhost-key.pem');
+  const scriptPath = join(directory, 'certificate.ps1');
+  // Ephemeral localhost-only certificate, no certificate-store installation or global trust change.
+  writeFileSync(scriptPath, `#Requires -Version 7.6
+param([string]$CertificatePath,[string]$KeyPath)
+$ErrorActionPreference='Stop'
+$rsa=[Security.Cryptography.RSA]::Create(2048)
+try {
+ $request=[Security.Cryptography.X509Certificates.CertificateRequest]::new('CN=localhost',$rsa,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1)
+ $san=[Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder]::new()
+ $san.AddDnsName('localhost');$san.AddIpAddress([Net.IPAddress]::Loopback)
+ $request.CertificateExtensions.Add($san.Build())
+ $certificate=$request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-1),[DateTimeOffset]::UtcNow.AddDays(1))
+ try {[IO.File]::WriteAllText($CertificatePath,$certificate.ExportCertificatePem());[IO.File]::WriteAllText($KeyPath,$rsa.ExportPkcs8PrivateKeyPem())} finally {$certificate.Dispose()}
+} finally {$rsa.Dispose()}
+`);
+  let server;
+  try {
+    execFileSync('pwsh', ['-NoProfile', '-File', scriptPath, '-CertificatePath', certificatePath, '-KeyPath', keyPath]);
+    let mode;
+    const requests = [];
+    server = createServer({ cert: readFileSync(certificatePath), key: readFileSync(keyPath) }, (request, reply) => {
+      let body = '';
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        requests.push({ path: request.url, body: JSON.parse(body), authorization: request.headers.authorization });
+        if (mode === 'drop' && requests.length === 1) { request.socket.destroy(); return; }
+        if (mode === 'stall') return;
+        if (mode === 'redirect') { reply.writeHead(302, { Location: `https://localhost:${server.address().port}/foreign?sig=provider-secret` }); }
+        else reply.writeHead(mode.startsWith('http') ? Number(mode.slice(4)) : 202);
+        reply.end('Bearer provider-secret and raw destination must never be persisted');
+      });
+    });
+    await new Promise((done) => server.listen(0, '127.0.0.1', done));
+    const callback = `https://localhost:${server.address().port}/callback?sig=synthetic-secret`;
+    const importUrl = new URL('../src/index.js', import.meta.url).href;
+    const run = promisify(execFile);
+    // The child trusts only this generated certificate in its own process. Identity/Graph/Blob
+    // requests remain fake, while the actual sender and native fetch cross the TLS wire.
+    const functions = [setRequiredSettings, response, activation, createHarness, contextCapture,
+      deliveryResultsFromLogs].map((fn) => fn.toString()).join('\n');
+    for (mode of ['drop', 'stall', 'redirect', 'http408', 'http429', 'http500', 'ack412']) {
+      requests.length = 0;
+      const repeated = mode === 'drop' || mode === 'ack412';
+      const code = `import { pollPimActivations } from ${JSON.stringify(importUrl)};
+${functions}
+const nativeFetch=globalThis.fetch;
+setRequiredSettings({AZD_PIM_TEAMS_WEBHOOK_URL:${JSON.stringify(callback)}});
+const event=activation('wire-event',new Date().toISOString());
+const outcomes=[];
+for(let attempt=0;attempt<${repeated ? 2 : 1};attempt++){
+ const harness=createHarness({graphPages:[{value:[event]}],writeResponses:${mode === 'ack412' ? "attempt===0?[response({}, {status:412})]:[]" : '[]'}});
+ const fakeFetch=globalThis.fetch;
+ globalThis.fetch=(input,init)=>String(input)===process.env.AZD_PIM_TEAMS_WEBHOOK_URL?nativeFetch(input,init):fakeFetch(input,init);
+ const capture=contextCapture();let error=null;
+ try{await pollPimActivations(null,capture.context)}catch(caught){error=caught.message}
+ outcomes.push({results:deliveryResultsFromLogs(capture.logs),error,writes:harness.calls.filter(c=>c.method==='PUT').map(c=>JSON.parse(c.body))});
+}
+console.log('WIRE_RESULT '+JSON.stringify(outcomes));`;
+      const started = Date.now();
+      const { stdout } = await run(process.execPath, ['--input-type=module', '-e', code], {
+        env: { ...process.env, NODE_EXTRA_CA_CERTS: certificatePath }, timeout: 25_000, maxBuffer: 256 * 1024,
+      });
+      const outcomes = JSON.parse(stdout.split('\n').find((line) => line.startsWith('WIRE_RESULT ')).slice(12));
+      assert.equal(requests.length, repeated ? 2 : 1, 'one POST per invocation, no automatic retry or redirect');
+      assert.equal(requests.filter((request) => request.path.startsWith('/foreign')).length, 0);
+      assert.equal(requests.every((request) => request.authorization === undefined), true);
+      assert.equal(requests.every((request) => request.body.type === 'message'), true);
+      for (const outcome of outcomes) for (const result of outcome.results) assertAdministratorSafe(result);
+      const first = outcomes[0].results[0];
+      if (mode === 'drop' || mode === 'stall') {
+        assert.equal(first.status, 'failed');
+        assert.equal(first.failure.category, mode === 'stall' ? 'timeout' : 'unknown');
+        assert.equal(first.failure.retryable, true);
+        assert.deepEqual(first.evidence, {});
+        assert.equal(outcomes[0].writes.length, 0);
+        if (mode === 'stall') assert.ok(Date.now() - started >= 9_000 && Date.now() - started < 20_000);
+      } else if (mode !== 'ack412') {
+        assert.equal(first.status, 'failed');
+        assert.equal(first.evidence.httpStatusCode, mode === 'redirect' ? 302 : Number(mode.slice(4)));
+        assert.equal(first.failure.retryable, mode !== 'redirect');
+        assert.equal(outcomes[0].writes.length, 0);
+      } else {
+        assert.equal(first.status, 'succeeded', 'acknowledgement is retained despite failed persistence');
+        assert.match(outcomes[0].error, /HTTP 412/);
+      }
+      if (repeated) {
+        assert.equal(outcomes[1].results[0].idempotencyKey, first.idempotencyKey);
+        assert.equal(outcomes[1].results[0].status, 'succeeded');
+        assert.equal(outcomes[1].writes.at(-1).recent[0].id, 'wire-event');
+      }
+      assert.doesNotMatch(JSON.stringify(outcomes), /synthetic-secret|provider-secret|localhost|Bearer/);
+    }
+  } finally {
+    if (server) { server.closeAllConnections(); await new Promise((done) => server.close(done)); }
+    if (resolve(directory).startsWith(resolve(tmpdir()) + '\\') || resolve(directory).startsWith(resolve(tmpdir()) + '/')) {
+      rmSync(directory, { recursive: true, force: true });
+    } else throw new Error('Unexpected test directory');
+  }
 });

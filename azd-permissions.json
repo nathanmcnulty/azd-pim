@@ -1,0 +1,77 @@
+{
+  "coverage": "partial",
+  "reviewedOn": "2026-10-11",
+  "gaps": [
+    "Partial source inventory for optional polling only: core PIM discovery and policy-write delegated scopes, operator directory roles, optional revocation and Azure Monitor deployment/cleanup authority require separate complete review.",
+    "Source declarations do not prove effective grants, consent, selected tenant access, recipient setup or live delivery. Catalog display metadata and this manifest authorize no permission grant.",
+    "Disabled root notification modules add no nested resources or RBAC assignments in compiled fixtures. Existing pre-provision scripts and selected live provisioning remain separate authorization and validation boundaries."
+  ],
+  "schemaVersion": "1.0",
+  "status": "implemented",
+  "solutionId": "azd-pim",
+  "requirements": [
+    {
+      "scope": "Tenant directory audit records",
+      "kind": "application",
+      "principal": "Optional polling Function managed identity",
+      "permission": "AuditLog.Read.All",
+      "feature": "polling-notifications",
+      "resource": "Microsoft Graph",
+      "defaultEnabled": false,
+      "phase": "runtime",
+      "evidenceState": "code",
+      "evidence": [
+        {
+          "sha256": "e1fdd04386ddc509a8df274f339625920b29a3568ee82a35a3c24355aa87d12a",
+          "path": "scripts/AzdPim.Optional.psm1"
+        },
+        {
+          "sha256": "83d8bc4955466bf13a2d344584114c80f12233bb885143f95ab2babf00138cff",
+          "path": "src/pim-notification-poller/src/index.js"
+        }
+      ],
+      "rationale": "Existing optional grant and directoryAudits reader; callback hardening adds no Graph permission."
+    },
+    {
+      "scope": "Optional poller storage account",
+      "kind": "azure-rbac",
+      "principal": "Optional polling Function managed identity",
+      "permission": "Storage Blob Data Contributor (ba92f5b4-2d11-453d-a403-e96b0029c9fe)",
+      "feature": "polling-notifications",
+      "resource": "Azure Storage",
+      "defaultEnabled": false,
+      "phase": "runtime",
+      "evidenceState": "code",
+      "evidence": [
+        {
+          "sha256": "1440b6e809c4642e3cf9af4cf3f50377a2cadfd9713e7c9e6e2e155a2d1bc70b",
+          "path": "infra/vendor/Azd.FlexScheduledPoller/flex-scheduled-poller-host.bicep"
+        },
+        {
+          "sha256": "af4f2e596c0be51d79f4681db5b3df2e6fbc3570cff23f3a4da8d73c995d6993",
+          "path": "infra/main.bicep"
+        }
+      ],
+      "rationale": "Existing locked host assigns Blob access for deployment and checkpoint storage; no role or scope is changed."
+    },
+    {
+      "scope": "Configured Teams Workflow endpoint",
+      "kind": "connector",
+      "principal": "Optional polling Function",
+      "permission": "Possession of configured protected HTTPS callback URL",
+      "feature": "polling-notifications",
+      "resource": "Teams Workflow callback",
+      "defaultEnabled": false,
+      "phase": "runtime",
+      "evidenceState": "code",
+      "evidence": [
+        {
+          "sha256": "83d8bc4955466bf13a2d344584114c80f12233bb885143f95ab2babf00138cff",
+          "path": "src/pim-notification-poller/src/index.js"
+        }
+      ],
+      "rationale": "Existing callback uses its protected URL without an Authorization header. HTTPS validation, manual redirect and acknowledgement deadline require no additional grant."
+    }
+  ],
+  "$schema": "https://raw.githubusercontent.com/nathanmcnulty/azd-reference/a29e222181ce8cdce5de148cf88e39bd3202cf91/schemas/permission-requirements.schema.json"
+}
