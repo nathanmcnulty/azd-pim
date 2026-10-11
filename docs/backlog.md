@@ -287,7 +287,7 @@ Review PIM-002 against the current repository state. Its status or authorization
 
 - **Kind:** maintenance
 - **Priority:** P2
-- **Status:** proposed
+- **Status:** done
 - **Wave:** 2
 - **Authorization:** local-only
 - **Blocker:** _none_
@@ -335,6 +335,9 @@ The repo already adopts Flex/Azure Monitor components; health and optional-path 
 **Evidence:**
 
 - Current main c12b1aa includes merged PR &num;17 with a durable last-successful-query checkpoint, bounded 24-hour replay, overlap deduplication, retained recovery-gap reporting and offline fixtures. The broader callback-failure, ambiguous-send and selected live delivery semantics in this item remain unverified, so the item stays proposed.
+- Bounded local callback acknowledgement hardening on base4c6ddfdb1cc0d5f30c9cac817a259decd181cc31&colon; HTTPS destination validation, manual redirects, one ten-second response-header deadline, closed ambiguous/timeout outcomes and no immediate retry. Actual localhost TLS fixtures prove accept-then-drop, stalled headers, redirects, HTTP408/429/500 and post-acknowledgement Blob412 preserve the event/key and stop watermark advancement; callback acknowledgement is not recipient delivery.
+- Full registered PowerShell7.6.6 validation passed129/129 Pester and21/21 Node, parsing, offline npm install/audit0 and actual Bicep0.46.1 compilation. Compiled root gate fixtures prove default plan and enforced/none with revocation disabled select no nested resources or grants, enabled paths select the expected module, and the alert path creates Azure Monitor scheduled-query rules rather than Sentinel analytics. Existing missed-window fixtures, state compatibility, component pins, KQL, cards and grant implementations remain unchanged.
+- Source-hashed partial optional-poller permission inventory records existing requirements and unknown baseline/effective-access gaps; no new permission or role is granted. Hosted validation selects hash-pinned PowerShell7.6.6 before tests. This closes the original local-only acceptance; independent review remains a publication gate, and actual selected-role activation, recipient receipt and rollback qualification stay separate in PIM-002.
 
 **Review and authorization note:**
 

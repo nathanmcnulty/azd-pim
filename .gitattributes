@@ -3,3 +3,6 @@ scripts/vendor/** text eol=lf
 contracts/notifications/** text eol=lf
 infra/vendor/Azd.AzureMonitorNotifications/** text eol=lf
 infra/vendor/Azd.FlexScheduledPoller/** text eol=lf
+scripts/AzdPim.Optional.psm1 text eol=lf
+src/pim-notification-poller/src/index.js text eol=lf
+infra/main.bicep text eol=lf
