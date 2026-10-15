@@ -1,3 +1,4 @@
+#Requires -Version 7.6
 Set-StrictMode -Version Latest
 
 $script:GraphV1 = 'https://graph.microsoft.com/v1.0'

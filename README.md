@@ -47,7 +47,7 @@ The solution does not create, modify, or require an emergency-access group. When
 
 Deployment validation follows the shared portfolio convention in [`docs/deployment-validation.md`](docs/deployment-validation.md). `Test-Deployment.ps1 -Plan` is fully offline, the default mode reuses cached sessions for read-only drift checks, and `-TestDelivery` is the only mode that may send a clearly labeled Teams test. Validation never initiates authentication, restores removed role settings, detaches roles that leave the current selection, or deletes authentication contexts.
 
-For repository changes, run `./scripts/Test-Repository.ps1`. It parses the PowerShell source, runs the offline Pester and Node suites, restores Node dependencies from the local npm cache, and compiles the root Bicep template to stdout without connecting to a tenant.
+For repository changes, use PowerShell 7.6 or later and Pester 6.2 or later, then run `./scripts/Test-Repository.ps1`. CI qualifies PowerShell 7.6.6 with Pester 6.2.0 and records the selected versions. It parses the PowerShell source, runs the offline Pester and Node suites, restores Node dependencies from the local npm cache, and compiles the root Bicep template to stdout without connecting to a tenant.
 
 Release preparation and verification are documented in [`docs/releasing.md`](docs/releasing.md). Release automation packages only commits already merged to `main`; it does not authenticate to or modify Azure or Microsoft Graph.
 
@@ -121,6 +121,8 @@ Context and policy display names are also configurable through `AZD_PIM_PRIVILEG
 An exact device ID list creates another companion block policy. The policy excludes the allowed IDs from a block grant, so unregistered, unknown, and non-allowlisted devices are blocked when the PIM context is requested. Pilot and validate this carefully before broad rollout.
 
 ## Prerequisites and permissions
+
+- PowerShell 7.6 or later for repository scripts and modules.
 
 - Microsoft Entra ID P2 or Microsoft Entra ID Governance licensing for PIM and Conditional Access features used here.
 - A signed-in administrator with Privileged Role Administrator for PIM role-setting writes and Conditional Access Administrator or Security Administrator for authentication contexts and Conditional Access.

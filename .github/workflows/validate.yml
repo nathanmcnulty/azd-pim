@@ -45,7 +45,9 @@ jobs:
       - name: Install PowerShell test dependencies
         run: |
           $ErrorActionPreference = 'Stop'
-          Install-Module Pester -RequiredVersion 5.7.1 -Force -Scope CurrentUser
+          Install-Module Pester -RequiredVersion 6.2.0 -Force -Scope CurrentUser
+          Import-Module Pester -RequiredVersion 6.2.0 -Force -ErrorAction Stop
+          Write-Host "PowerShell $($PSVersionTable.PSVersion); Pester $((Get-Module Pester).Version)"
           Install-Module Microsoft.Graph.Authentication -RequiredVersion 2.38.0 -Force -Scope CurrentUser
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
