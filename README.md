@@ -47,7 +47,7 @@ The solution does not create, modify, or require an emergency-access group. When
 
 Deployment validation follows the shared portfolio convention in [`docs/deployment-validation.md`](docs/deployment-validation.md). `Test-Deployment.ps1 -Plan` is fully offline, the default mode reuses cached sessions for read-only drift checks, and `-TestDelivery` is the only mode that may send a clearly labeled Teams test. Validation never initiates authentication, restores removed role settings, detaches roles that leave the current selection, or deletes authentication contexts.
 
-For repository changes, use PowerShell 7.6 or later and Pester 6.2 or later, then run `./scripts/Test-Repository.ps1`. CI qualifies PowerShell 7.6.6 with Pester 6.2.0 and records the selected versions. It parses the PowerShell source, runs the offline Pester and Node suites, restores Node dependencies from the local npm cache, and compiles the root Bicep template to stdout without connecting to a tenant.
+For repository changes, use PowerShell 7.6 or later and Pester 6.2 or later, then run `./scripts/Test-Repository.ps1`. CI qualifies PowerShell 7.6.6 with Pester 6.2.0 and records the selected versions. Its `-PesterVersion 6.2.0` runner argument pins that version in the actual test process; ordinary local validation accepts Pester 6.2 or later. It parses the PowerShell source, runs the offline Pester and Node suites, restores Node dependencies from the local npm cache, and compiles the root Bicep template to stdout without connecting to a tenant.
 
 Release preparation and verification are documented in [`docs/releasing.md`](docs/releasing.md). Release automation packages only commits already merged to `main`; it does not authenticate to or modify Azure or Microsoft Graph.
 

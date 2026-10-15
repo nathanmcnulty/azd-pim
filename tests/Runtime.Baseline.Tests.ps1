@@ -22,6 +22,7 @@ Describe 'Supported PowerShell and Pester baseline' {
             $workflow | Should -Match 'Install-Module Pester -RequiredVersion 6\.2\.0 -Force -Scope CurrentUser'
             $workflow | Should -Match 'Import-Module Pester -RequiredVersion 6\.2\.0 -Force -ErrorAction Stop'
             $workflow | Should -Match 'Get-Module Pester'
+            $workflow | Should -Match 'run: ./scripts/Test-Repository\.ps1 -PesterVersion 6\.2\.0'
             $workflow | Should -Match "PSVersionTable\.PSVersion -ne \[version\]'7\.6\.6'"
             $workflow | Should -Not -Match 'Pester[^\r\n]*5\.7'
         }
@@ -30,8 +31,13 @@ Describe 'Supported PowerShell and Pester baseline' {
     It 'requires Pester 6.2 or later and records local selected versions' {
         $runner = Get-Content -LiteralPath (Join-Path $script:repositoryRoot 'scripts/Test-Repository.ps1') -Raw
         $runner | Should -Match 'Import-Module Pester -MinimumVersion 6\.2\.0 -Force -ErrorAction Stop'
+        $runner | Should -Match 'Import-Module Pester -RequiredVersion \$PesterVersion -Force -ErrorAction Stop'
         $runner | Should -Match 'PSVersionTable\.PSVersion'
         $runner | Should -Match 'Get-Module Pester'
+    }
+
+    It 'rejects a requested Pester version below the supported floor before running validation' {
+        { & (Join-Path $script:repositoryRoot 'scripts/Test-Repository.ps1') -PesterVersion 5.7.1 } | Should -Throw '*PesterVersion*'
     }
 
     It 'locks canonical PowerShell 7.6 modules with matching versions and file hashes' {

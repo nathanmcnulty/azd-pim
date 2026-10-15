@@ -64,7 +64,7 @@ jobs:
         run: az bicep install --version v0.46.1
 
       - name: Run repository validation
-        run: ./scripts/Test-Repository.ps1
+        run: ./scripts/Test-Repository.ps1 -PesterVersion 6.2.0
 
       - name: Audit production dependencies
         working-directory: src/pim-notification-poller

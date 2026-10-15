@@ -81,7 +81,7 @@ jobs:
         run: az bicep install --version v0.46.1
 
       - name: Validate release commit
-        run: ./scripts/Test-Repository.ps1
+        run: ./scripts/Test-Repository.ps1 -PesterVersion 6.2.0
 
       - name: Build deterministic archives
         env:
