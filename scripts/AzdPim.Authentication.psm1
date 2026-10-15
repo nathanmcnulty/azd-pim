@@ -1,3 +1,4 @@
+#Requires -Version 7.6
 Set-StrictMode -Version Latest
 
 $vendorModule = Join-Path $PSScriptRoot 'vendor/Azd.GraphAuthentication/Azd.GraphAuthentication.psd1'

@@ -1,3 +1,4 @@
+#Requires -Version 7.6
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 

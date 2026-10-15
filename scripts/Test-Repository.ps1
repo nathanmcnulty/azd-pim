@@ -1,6 +1,9 @@
 #Requires -Version 7.6
 [CmdletBinding()]
-param()
+param(
+    [ValidateScript({ $_ -ge [version] '6.2.0' })]
+    [version] $PesterVersion
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -46,8 +49,14 @@ if ($parseErrors.Count -gt 0) {
 }
 
 Write-Host 'Running repository Pester tests without tenant access.'
-Import-Module Pester -MinimumVersion 5.7.1 -Force -ErrorAction Stop
+if ($PSBoundParameters.ContainsKey('PesterVersion')) {
+    Import-Module Pester -RequiredVersion $PesterVersion -Force -ErrorAction Stop
+}
+else {
+    Import-Module Pester -MinimumVersion 6.2.0 -Force -ErrorAction Stop
+}
 Import-Module Microsoft.Graph.Authentication -MinimumVersion 2.30.0 -Force -ErrorAction Stop
+Write-Information "PowerShell $($PSVersionTable.PSVersion); Pester $((Get-Module Pester).Version)" -InformationAction Continue
 $pesterResult = Invoke-Pester -Path (Join-Path $templateRoot 'tests') -Output Detailed -PassThru
 if ($null -eq $pesterResult -or $pesterResult.TotalCount -eq 0 -or $pesterResult.FailedCount -gt 0 -or $pesterResult.FailedContainersCount -gt 0 -or $pesterResult.SkippedCount -gt 0 -or $pesterResult.NotRunCount -gt 0) {
     throw "$($pesterResult.FailedCount) Pester test(s) failed."

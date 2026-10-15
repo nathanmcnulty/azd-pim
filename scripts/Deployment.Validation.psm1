@@ -1,3 +1,4 @@
+#Requires -Version 7.6
 Set-StrictMode -Version Latest
 
 Import-Module (Join-Path $PSScriptRoot 'AzdPim.Common.psm1') -Force
