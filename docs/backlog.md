@@ -7,7 +7,7 @@
 - **Repository:** nathanmcnulty/azd-pim
 - **Source revision:** `c12b1aa70c409df7d57ddd4af5587c305523d7c9`
 - **Captured:** 2026-10-04
-- **Items:** 6
+- **Items:** 7
 
 ## PIM-001: Reconcile this backlog with current source and active work
 
@@ -172,6 +172,60 @@ Open report captured 2026-10-03 during execution reconciliation. Another code-qu
 **Review and authorization note:**
 
 Review PIM-006 against the current repository state. Its status or authorization class is not eligible for an actionable generated handoff. Do not claim or execute it without explicit selection, satisfied dependencies, and every required authorization. Never interpret this generated view as approval.
+
+## PIM-007: Reject inconclusive suites in the shared validation and release runner
+
+- **Kind:** maintenance
+- **Priority:** P1
+- **Status:** done
+- **Wave:** 0
+- **Authorization:** local-only
+- **Blocker:** _none_
+- **Claim:** _none_
+
+**Problem:**
+
+Pester 6.2 reports an inconclusive-only suite with no failed tests, so the shared runner could report success and continue later validation commands.
+
+**Scope:**
+
+- scripts/Test-Repository.ps1 outcome gate
+- Isolated actual-runner regression tests with native command tripwires
+
+**Acceptance:**
+
+- Require an overall Passed result and zero inconclusive tests while preserving every existing empty/failure/skip/not-run check.
+- Run real Pester 6.2 fixtures through an unmodified copy of the maintained runner; an inconclusive fixture reaches zero later native commands and a passing fixture retains all five stages.
+- Preserve baseline version selection, runtime/deployment code, permissions, package locks, component pins and native qualification requirements.
+
+**Validation:**
+
+- ./scripts/Test-Repository.ps1 -PesterVersion 6.2.0
+- Confirm the regression fails on main 691ecf4d9b8977e19c66f8dfa2065a40d2e40601 and passes with the corrected gate.
+- Validate canonical backlog schema and regenerate/check docs/backlog.md using reviewed Reference main 3f88050332f9647da5e3bc8044f87cf2c7101c08.
+
+**Dependencies:**
+
+- _none_
+
+**Components:**
+
+- _none_
+
+**Sources:**
+
+- https&colon;//github.com/nathanmcnulty/azd-pim/issues/21
+- scripts/Test-Repository.ps1
+
+**Evidence:**
+
+- Freshly fetched main 691ecf4d9b8977e19c66f8dfa2065a40d2e40601 already includes merged PowerShell/Pester baseline PR &num;22; that work was preserved. The original actual runner accepts an inconclusive-only real Pester 6.2 suite and reaches all five intercepted npm/node/Bicep stages. The new regression suite produces one passing positive control and one failing original inconclusive case before the fix. Native requests are intercepted; the Graph SDK import is stubbed only inside the isolated fixture process.
+- The full corrected registered validator passes on PowerShell 7.6.6/Pester 6.2.0&colon; 136/136 Pester tests and 21/21 Node tests, zero failures/skips/inconclusive/not-run, source parse, offline dependency restoration, Node syntax and Bicep 0.42.1 compile. Two new actual-entrypoint cases assert real fixture execution, exact Pester version, the passing path and zero downstream calls after an inconclusive result. Total registered validation wall time was 83.11 seconds.
+- Only overall-result and inconclusive-result rejection are added to the shared CI/release gate; previous safety checks remain. No dependency, module, vendor, permission, infrastructure, role-policy, poller or notification code changed. No Azure/Graph authentication, live pilot, role mutation, delivery, deployment or tenant cleanup ran. Issue &num;21 and PIM-002 native qualification remain open.
+
+**Review and authorization note:**
+
+Review PIM-007 against the current repository state. Its status or authorization class is not eligible for an actionable generated handoff. Do not claim or execute it without explicit selection, satisfied dependencies, and every required authorization. Never interpret this generated view as approval.
 
 ## PIM-005: Adopt deployment-validation 1.1.1 while preserving PIM report compatibility
 
