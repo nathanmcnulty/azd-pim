@@ -1,0 +1,113 @@
+BeforeAll {
+    Import-Module (Join-Path $PSScriptRoot '../scripts/AzdPim.Common.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot '../scripts/AzdPim.Graph.psm1') -Force
+}
+
+Describe 'owned-reader plan boundary' {
+    BeforeEach {
+        # Do not inherit a developer's deployment configuration into fixtures.
+        $script:savedEnvironment = @{}
+        Get-ChildItem Env:AZD_PIM_* | ForEach-Object {
+            $savedEnvironment[$_.Name] = $_.Value
+            Remove-Item -LiteralPath "Env:$($_.Name)"
+        }
+        $script:configuration = Get-AzdPimConfiguration
+        $configuration.PrivilegedRoleIds = @('11111111-1111-1111-1111-111111111111')
+        $script:reader = [pscustomobject]@{
+            TenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            Calls = [System.Collections.Generic.List[string]]::new()
+        }
+        $reader | Add-Member ScriptMethod ReadPimJson {
+            param([string] $Uri)
+            $this.Calls.Add($Uri)
+            $values = switch -Wildcard ($Uri) {
+                '*roleDefinitions*true' {
+                    @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Fixture role'; description = ''; isBuiltIn = $true; isEnabled = $true; isPrivileged = $true }
+                }
+                '*roleManagementPolicyAssignments*' {
+                    @{ roleDefinitionId = '11111111-1111-1111-1111-111111111111'; policyId = 'fixture-policy' }
+                }
+                '*roleManagementPolicies*' {
+                    @{ id = 'fixture-policy'; rules = @(
+                        @{ id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $false; claimValue = '' },
+                        @{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('MultiFactorAuthentication', 'Justification') }
+                    ) }
+                }
+            }
+            return (@{ value = @($values | Where-Object { $null -ne $_ }) } | ConvertTo-Json -Depth 30 -Compress)
+        }
+    }
+
+    AfterEach {
+        Get-ChildItem Env:AZD_PIM_* | Remove-Item
+        foreach ($name in $savedEnvironment.Keys) { Set-Item -LiteralPath "Env:$name" -Value $savedEnvironment[$name] }
+    }
+
+    It 'runs the real planner through the supplied reader without SDK authentication' {
+        $plan = New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader
+        $plan.tenantId | Should -Be $reader.TenantId
+        $plan.mode | Should -Be 'plan'
+        $plan.tiers.privileged.roles.Count | Should -Be 1
+        $plan.tiers.privileged.context.action | Should -Be 'create'
+        $plan.tiers.privileged.conditionalAccessPolicies[0].action | Should -Be 'create'
+        $plan.tiers.privileged.roleRules[0].activationMfa.desiredEnabledRules | Should -Be @('Justification')
+        $reader.Calls.Count | Should -Be 6
+        $path = Join-Path $TestDrive 'plan.json'
+        Write-AzdPimPlanReport -Plan $plan -Path $path
+        (Get-Content -Raw $path | ConvertFrom-Json).tiers.privileged.roles[0].displayName | Should -Be 'Fixture role'
+        InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
+    }
+
+    It 'rejects unsupported configuration before invoking the reader' -ForEach @(
+        @{ Property = 'Mode'; Value = 'enforced' },
+        @{ Property = 'NotificationMode'; Value = 'polling' },
+        @{ Property = 'EnableSessionRevocation'; Value = $true },
+        @{ Property = 'EmergencyAccessGroupId'; Value = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' },
+        @{ Property = 'TeamsWebhookUrl'; Value = 'https://example.invalid/webhook' },
+        @{ Property = 'SentinelWorkspaceResourceId'; Value = 'fixture' },
+        @{ Property = 'RevocationAlertActionGroupResourceId'; Value = 'fixture' }
+    ) {
+        $configuration.$Property = $Value
+        { New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader } | Should -Throw '*only plan mode*'
+        $reader.Calls.Count | Should -Be 0
+    }
+
+    It 'rejects writes before dispatch and releases the scoped reader after failure' {
+        Mock New-AzdPimPlan -ModuleName AzdPim.Graph {
+            Invoke-AzdPimGraphRequest -Method PATCH -Uri 'https://graph.microsoft.com/v1.0/policies/roleManagementPolicies/fixture'
+        }
+        { New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader } | Should -Throw '*Writes and request bodies are forbidden*'
+        $reader.Calls.Count | Should -Be 0
+        InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
+    }
+
+    It 'does not retry or fall back when the owned reader fails' {
+        $reader | Add-Member ScriptMethod ReadPimJson { param($Uri) $this.Calls.Add($Uri); throw 'Fixture cancellation' } -Force
+        { New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader } | Should -Throw '*Fixture cancellation*'
+        $reader.Calls.Count | Should -Be 1
+        InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
+    }
+
+    It 'rejects even an explicitly null GET body before dispatch' {
+        Mock New-AzdPimPlan -ModuleName AzdPim.Graph {
+            Invoke-AzdPimGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/me' -Body $null
+        }
+        { New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader } | Should -Throw '*request bodies are forbidden*'
+        $reader.Calls.Count | Should -Be 0
+    }
+
+    It 'clears the reader after malformed response JSON' {
+        $reader | Add-Member ScriptMethod ReadPimJson { param($Uri) return '{invalid' } -Force
+        { New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader } | Should -Throw
+        InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
+    }
+
+    It 'rejects nested plans without replacing the running reader' {
+        Mock New-AzdPimPlan -ModuleName AzdPim.Graph {
+            param($Configuration, $State)
+            New-AzdPimReadPlan -Configuration $Configuration -ReadContext ([pscustomobject]@{})
+        }
+        { New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader } | Should -Throw '*already running*'
+        InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
+    }
+}
