@@ -487,7 +487,7 @@ function Resolve-AzdPimAuthenticationStrength {
     )
 
     if ($AuthenticationProfile -eq 'mfa') { return $null }
-    $policies = @(Get-AzdPimGraphCollection -Uri "$script:GraphBaseV1/policies/authenticationStrengthPolicies?`$top=100")
+    $policies = @(Get-AzdPimGraphCollection -Uri "$script:GraphBaseV1/policies/authenticationStrengthPolicies")
     if ($AuthenticationProfile -eq 'custom') {
         $match = @($policies | Where-Object { $_.id -eq $CustomId }) | Select-Object -First 1
         if (-not $match) { throw "Authentication strength '$CustomId' does not exist in the tenant." }

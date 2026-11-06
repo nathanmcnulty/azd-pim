@@ -17,10 +17,15 @@ Describe 'owned-reader plan boundary' {
             TenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
             Calls = [System.Collections.Generic.List[string]]::new()
             ConditionalAccessPolicies = @()
+            StrengthResponses = @{}
         }
         $reader | Add-Member ScriptMethod ReadPimJson {
             param([string] $Uri)
             $this.Calls.Add($Uri)
+            if ($Uri -like 'https://graph.microsoft.com/v1.0/policies/authenticationStrengthPolicies*') {
+                if (-not $this.StrengthResponses.ContainsKey($Uri)) { throw 'Unsupported authentication-strength query.' }
+                return ($this.StrengthResponses[$Uri] | ConvertTo-Json -Depth 30 -Compress)
+            }
             $values = switch -Wildcard ($Uri) {
                 '*conditionalAccess/policies*' { $this.ConditionalAccessPolicies }
                 '*roleDefinitions*true' {
@@ -121,6 +126,34 @@ Describe 'owned-reader plan boundary' {
     ) {
         $reader.ConditionalAccessPolicies = @($PolicyJson | ConvertFrom-Json)
         { New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader } | Should -Throw '*context references*'
+        InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
+    }
+
+    It 'uses the documented strength collection query and follows returned pagination' -ForEach @(
+        @{ Profile = 'phishingResistant' },
+        @{ Profile = 'custom' }
+    ) {
+        # The v1.0 list API documents a bare collection and optional $filter,
+        # not $top. A strict transport must expose unsupported request options.
+        $uri = 'https://graph.microsoft.com/v1.0/policies/authenticationStrengthPolicies'
+        $next = $uri + '?$skiptoken=strength-fixture'
+        $strengthId = '00000000-0000-0000-0000-000000000004'
+        $reader.StrengthResponses[$uri] = @{ value = @(); '@odata.nextLink' = $next }
+        $reader.StrengthResponses[$next] = @{ value = @(@{
+            id = $strengthId; policyType = 'builtIn'; displayName = 'Phishing-resistant MFA'
+        }) }
+        $configuration.PrivilegedAuthenticationProfile = $Profile
+        $configuration.PrivilegedAuthenticationStrengthId = $strengthId
+
+        { $reader.ReadPimJson($uri + '?$top=100') } | Should -Throw '*Unsupported authentication-strength query*'
+        $reader.Calls.Clear()
+        $plan = New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader
+        $plan.tiers.privileged.authenticationStrength.id | Should -Be $strengthId
+        $plan.tiers.privileged.conditionalAccessPolicies[0].body.grantControls.authenticationStrength.id | Should -Be $strengthId
+        $reader.Calls.Count | Should -Be 8
+        $reader.Calls | Should -Contain $uri
+        $reader.Calls | Should -Contain $next
+        $reader.Calls | Should -Not -Contain ($uri + '?$top=100')
         InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
     }
 
