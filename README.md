@@ -118,6 +118,14 @@ The GUI labels live/cached inventory with tenant and retrieval time, retains the
 
 Context and policy display names are also configurable through `AZD_PIM_PRIVILEGED_CONTEXT_NAME`, `AZD_PIM_LESS_PRIVILEGED_CONTEXT_NAME`, `AZD_PIM_PRIVILEGED_CA_POLICY_NAME`, and `AZD_PIM_LESS_PRIVILEGED_CA_POLICY_NAME`.
 
+A pending Conditional Access policy POST is never retried merely because a later
+list has no matching policy. Graph may not expose a committed policy immediately.
+Keep the durable state and receipt and recheck later. One unique policy matching
+the complete recorded intent can be reconciled; if none appears, investigate the
+original write and audit evidence before manually reconciling state. A confirmed
+rejection also retains the intent for operator review. Do not remove pending state
+merely to get past the guard or enable display-name adoption to bypass it.
+
 ### Device controls
 
 `compliant` or `hybridJoined` is combined with the tier's authentication requirement using `AND`. `compliantOrHybrid` needs a companion policy because a single flat Conditional Access grant operator cannot express `MFA AND (compliant OR hybrid joined)`.

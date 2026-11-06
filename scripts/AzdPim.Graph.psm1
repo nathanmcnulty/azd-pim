@@ -5,6 +5,38 @@ $script:GraphBaseV1 = 'https://graph.microsoft.com/v1.0'
 $script:GraphBaseBeta = 'https://graph.microsoft.com/beta'
 $script:AuthenticationContextRuleId = 'AuthenticationContext_EndUser_Assignment'
 $script:ReadPlanContext = $null
+$script:PilotContext = $null
+
+function New-AzdPimOwnedPlan {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [object] $Configuration,
+        [Parameter(Mandatory)] [object] $Context, [AllowNull()] [object] $State)
+    if ($script:PilotContext -or $script:ReadPlanContext) { throw 'An owned operation is already running.' }
+    if ($Configuration.Mode -cne 'plan' -or $Configuration.PrivilegedRoleScope -cne 'selected' -or
+        $Configuration.LessPrivilegedRoleScope -cne 'selected' -or $Configuration.NotificationMode -cne 'none' -or
+        $Configuration.EnableSessionRevocation) { throw 'Only a selected-role core pilot is supported.' }
+    if (-not $Context.PSObject.Methods['RequestPimJson'] -or [guid]$Context.TenantId -eq [guid]::Empty) { throw 'An owned pilot transport is required.' }
+    try {
+        $script:PilotContext = $Context
+        New-AzdPimPlan -Configuration $Configuration -State $State
+    } finally { $script:PilotContext = $null }
+}
+
+function Invoke-AzdPimOwnedApply {
+    # Approval, fresh-plan comparison, transport authorization and durable storage
+    # are host responsibilities. All mutation ordering/recovery stays in Apply.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [object] $Plan, [Parameter(Mandatory)] [object] $Context,
+        [AllowNull()] [object] $ExistingState, [Parameter(Mandatory)] [scriptblock] $StateChanged)
+    if ($script:PilotContext -or $script:ReadPlanContext) { throw 'An owned operation is already running.' }
+    if ($Plan.configuration.PrivilegedRoleScope -cne 'selected' -or $Plan.configuration.LessPrivilegedRoleScope -cne 'selected' -or
+        $Plan.configuration.NotificationMode -cne 'none' -or $Plan.configuration.EnableSessionRevocation -or
+        $Plan.tenantId -cne $Context.TenantId) { throw 'Only a tenant-bound selected-role core pilot is supported.' }
+    try {
+        $script:PilotContext = $Context
+        Invoke-AzdPimApply -Plan $Plan -ExistingState $ExistingState -StateChanged $StateChanged -Confirm:$false
+    } finally { $script:PilotContext = $null }
+}
 
 function New-AzdPimReadPlan {
     <#
@@ -60,6 +92,10 @@ function Invoke-AzdPimGraphRequest {
 
     # Reject writes outside the SDK retry path. A failed owned read must never
     # fall back to a cached Microsoft Graph PowerShell session.
+    if ($null -ne $script:PilotContext) {
+        $json = if ($PSBoundParameters.ContainsKey('Body')) { $Body | ConvertTo-Json -Depth 100 -Compress } else { $null }
+        return ($script:PilotContext.RequestPimJson($Method, $Uri, $json) | ConvertFrom-Json -Depth 100 -ErrorAction Stop)
+    }
     if ($null -ne $script:ReadPlanContext) {
         if ($Method -cne 'GET' -or $PSBoundParameters.ContainsKey('Body')) {
             throw 'Writes and request bodies are forbidden in an owned-reader plan.'
@@ -100,7 +136,9 @@ function Invoke-AzdPimGraphRequest {
             if ($AllowNotFound -and $statusCode -eq 404) {
                 return $null
             }
-            if ($statusCode -in @(429, 500, 502, 503, 504) -and $attempt -lt 5) {
+            # A POST may have committed despite a failed response. Preserve the
+            # caller's durable intent instead of issuing another create.
+            if ($Method -ne 'POST' -and $statusCode -in @(429, 500, 502, 503, 504) -and $attempt -lt 5) {
                 $retryAfter = 0
                 $headersProperty = $response.PSObject.Properties['Headers']
                 $headers = if ($headersProperty) { $headersProperty.Value } else { $null }
@@ -146,6 +184,7 @@ function Get-AzdPimTenantId {
     [CmdletBinding()]
     param()
 
+    if ($null -ne $script:PilotContext) { return [string]$script:PilotContext.TenantId }
     if ($null -ne $script:ReadPlanContext) {
         return [string]$script:ReadPlanContext.TenantId
     }
@@ -414,6 +453,84 @@ function Test-AzdPimConditionalAccessPolicyMatches {
     return $true
 }
 
+function Test-AzdPimPendingPolicyMatches {
+    <#
+    Pending POST recovery is an ownership decision, not the ordinary drift check.
+    Compare the complete recorded writable body; never infer ownership from the
+    display name plus the subset compared by Test-AzdPimConditionalAccessPolicyMatches.
+    The response defaults below are deliberately bounded to fields shown by:
+    https://learn.microsoft.com/graph/api/conditionalaccesspolicy-get?view=graph-rest-beta
+    Unknown fields (even null), unexpected nonempty fields and changed values
+    require manual review. Array order is conservative: a reordered response can
+    require review, but cannot accidentally authorize recovery.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [object] $Existing,
+        [Parameter(Mandatory)] [object] $Desired,
+        [switch] $LivePolicy
+    )
+
+    $nullDefaults = @(
+        '/templateId', '/partialEnablementStrategy', '/sessionControls',
+        '/conditions/platforms', '/conditions/locations', '/conditions/times',
+        '/conditions/deviceStates', '/conditions/devices', '/conditions/clientApplications',
+        '/conditions/applications/applicationFilter',
+        '/conditions/users/includeGuestsOrExternalUsers', '/conditions/users/excludeGuestsOrExternalUsers',
+        '/grantControls/authenticationStrength',
+        '/sessionControls/disableResilienceDefaults', '/sessionControls/applicationEnforcedRestrictions',
+        '/sessionControls/cloudAppSecurity', '/sessionControls/persistentBrowser',
+        '/sessionControls/continuousAccessEvaluation', '/sessionControls/secureSignInSession',
+        '/sessionControls/signInFrequency/value', '/sessionControls/signInFrequency/type'
+    )
+    $emptyDefaults = @(
+        '/conditions/userRiskLevels', '/conditions/signInRiskLevels',
+        '/conditions/applications/includeApplications', '/conditions/applications/excludeApplications',
+        '/conditions/applications/includeUserActions', '/conditions/applications/includeAuthenticationContextClassReferences',
+        '/conditions/users/includeUsers', '/conditions/users/excludeUsers',
+        '/conditions/users/includeGroups', '/conditions/users/excludeGroups',
+        '/conditions/users/includeRoles', '/conditions/users/excludeRoles',
+        '/grantControls/customAuthenticationFactors', '/grantControls/termsOfUse'
+    )
+    $responseMetadata = @('/id', '/createdDateTime', '/modifiedDateTime', '/@odata.context', '/@odata.type', '/@microsoft.graph.tips', '/grantControls/authenticationStrength@odata.context')
+    # Graph expands this referenced entity. Only its ID is part of the policy's
+    # writable reference; descriptive response properties do not confer ownership.
+    foreach ($name in @('createdDateTime', 'modifiedDateTime', 'displayName', 'description', 'policyType', 'requirementsSatisfied', 'allowedCombinations', 'combinationConfigurations', 'combinationConfigurations@odata.context', '@odata.type')) {
+        $responseMetadata += "/grantControls/authenticationStrength/$name"
+    }
+
+    function Test-ExactValue {
+        param([AllowNull()] [object] $Actual, [AllowNull()] [object] $Expected, [string] $Path)
+        if ($Expected -is [System.Collections.IDictionary]) {
+            if ($Actual -isnot [System.Collections.IDictionary]) { return $false }
+            foreach ($key in $Expected.Keys) {
+                if (-not $Actual.Contains($key) -or -not (Test-ExactValue -Actual $Actual[$key] -Expected $Expected[$key] -Path "$Path/$(([string]$key).Replace('~', '~0').Replace('/', '~1'))")) { return $false }
+            }
+            foreach ($key in $Actual.Keys) {
+                if ($Expected.Contains($key)) { continue }
+                $childPath = "$Path/$(([string]$key).Replace('~', '~0').Replace('/', '~1'))"
+                if ($LivePolicy -and $childPath -cin $responseMetadata) { continue }
+                if ($LivePolicy -and $childPath -cin $nullDefaults -and $null -eq $Actual[$key]) { continue }
+                if ($LivePolicy -and $childPath -cin $emptyDefaults -and $Actual[$key] -is [System.Collections.IList] -and $Actual[$key].Count -eq 0) { continue }
+                return $false
+            }
+            return $true
+        }
+        if ($Expected -is [System.Collections.IList]) {
+            if ($Actual -isnot [System.Collections.IList] -or $Actual.Count -ne $Expected.Count) { return $false }
+            for ($index = 0; $index -lt $Expected.Count; $index++) {
+                if (-not (Test-ExactValue -Actual $Actual[$index] -Expected $Expected[$index] -Path "$Path/$index")) { return $false }
+            }
+            return $true
+        }
+        return (($Actual | ConvertTo-Json -Depth 100 -Compress) -ceq ($Expected | ConvertTo-Json -Depth 100 -Compress))
+    }
+
+    $actualBody = $Existing | ConvertTo-Json -Depth 100 -Compress | ConvertFrom-Json -AsHashtable -Depth 100
+    $desiredBody = $Desired | ConvertTo-Json -Depth 100 -Compress | ConvertFrom-Json -AsHashtable -Depth 100
+    return Test-ExactValue -Actual $actualBody -Expected $desiredBody -Path ''
+}
+
 function Resolve-AzdPimContext {
     [CmdletBinding()]
     param(
@@ -639,16 +756,18 @@ function Resolve-AzdPimConditionalAccessPolicy {
     if ($matching.Count -gt 1) { throw "Multiple Conditional Access policies are named '$DisplayName'." }
     if ($pendingCreate) {
         $intentBody = Get-AzdPimStateProperty -Object $pendingCreate -Name 'body'
-        if (-not (Test-AzdPimConditionalAccessPolicyMatches -Existing $intentBody -Desired $Body)) {
+        if (-not (Test-AzdPimPendingPolicyMatches -Existing $intentBody -Desired $Body)) {
             throw "Pending Conditional Access creation '$Key' does not match the current desired policy. Review the durable state before rerunning."
         }
         if ($matching.Count -eq 1) {
-            if (-not (Test-AzdPimConditionalAccessPolicyMatches -Existing $matching[0] -Desired $Body)) {
+            if (-not (Test-AzdPimPendingPolicyMatches -Existing $matching[0] -Desired $Body -LivePolicy)) {
                 throw "Pending Conditional Access creation '$Key' found a same-name policy that does not exactly match the recorded intent. Refuse to adopt it."
             }
             return [pscustomobject]@{ key = $Key; id = $matching[0].id; action = 'none'; existing = $matching[0]; body = $Body; adopted = $false; recoveredPendingCreate = $true }
         }
-        return [pscustomobject]@{ key = $Key; id = $null; action = 'create'; existing = $null; body = $Body; adopted = $false; recoveredPendingCreate = $false }
+        # A missing list result does not prove that the POST failed. Graph may
+        # not expose a committed policy yet; another POST could create a duplicate.
+        throw "Pending Conditional Access creation '$Key' has no visible matching policy. Do not retry the POST. Recheck later; if it remains absent, investigate the original write and reconcile the durable state manually only after confirming its outcome."
     }
     if ($matching.Count -eq 1) {
         if (-not $AdoptExisting) {
@@ -1031,6 +1150,8 @@ function Invoke-AzdPimApply {
 }
 
 Export-ModuleMember -Function @(
+    'New-AzdPimOwnedPlan',
+    'Invoke-AzdPimOwnedApply',
     'New-AzdPimReadPlan',
     'Invoke-AzdPimGraphRequest',
     'Get-AzdPimGraphCollection',
