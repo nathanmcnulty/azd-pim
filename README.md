@@ -76,7 +76,11 @@ azd env set AZD_PIM_MODE enforced
 azd up
 ```
 
-Use role **definition IDs**, not assignment IDs or display names. Until azd-gui supports trusted tenant-backed option providers, `scripts/Status.ps1` and the plan report provide the live role inventory needed to choose IDs. The GUI design is tracked in [azd-gui issue #41](https://github.com/nathanmcnulty/azd-gui/issues/41).
+Use role **definition IDs**, not assignment IDs or display names, for CLI/environment configuration. `scripts/Status.ps1` and the plan report provide the live role inventory for manual selection.
+
+The azd-gui read-only pilot workflow adds name search and individual role selection, including custom roles, through the existing owned Graph session. Review the Graph identity with an empty pilot, approve sign-in, refresh tenant roles, choose roles and policy settings, then review/sign in again to generate the complete read-only plan. Manual IDs remain available. Empty tiers are excluded; the GUI never expands an empty pilot to all roles. The picker combines complete v1.0 role metadata with the documented beta privilege-classification queries; unknown classification blocks selected-role planning. This beta dependency can change independently of the app.
+
+The GUI labels live/cached inventory with tenant and retrieval time, retains the last complete successful per-tenant list after failed refreshes, and leaves new roles unselected. It retains IDs and flags missing, disabled, renamed or reclassified selections for explicit review. A fresh complete role list is required before generation; cached/manual input cannot bypass unavailable classification. Full JSON retains current and proposed settings, fresh role metadata, ownership warnings and read-only process evidence. Existing-object preview proposes updates only; it establishes no ownership and applies nothing. This does not change CLI enforcement, notification/revocation deployment, or release packaging. See [the GUI workflow](https://github.com/nathanmcnulty/azd-gui#read-only-pim-pilot-planning) and [role-provider tracking](https://github.com/nathanmcnulty/azd-gui/issues/155).
 
 ## Configuration
 
