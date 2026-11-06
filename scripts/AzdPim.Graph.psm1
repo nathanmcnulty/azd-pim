@@ -4,6 +4,50 @@ Set-StrictMode -Version Latest
 $script:GraphBaseV1 = 'https://graph.microsoft.com/v1.0'
 $script:GraphBaseBeta = 'https://graph.microsoft.com/beta'
 $script:AuthenticationContextRuleId = 'AuthenticationContext_EndUser_Assignment'
+$script:ReadPlanContext = $null
+
+function New-AzdPimReadPlan {
+    <#
+    .SYNOPSIS
+    Runs the existing planner with an explicitly supplied, process-owned reader.
+    .DESCRIPTION
+    The host owns authentication and implements ReadPimJson(string uri), returning
+    JSON for permitted Graph GET requests only. The host must validate endpoints,
+    pagination, identity, grants and cancellation on every request. No credential
+    or access token is accepted by this interface. This entry point does not run
+    azd hooks, load deployment state, persist files or invoke enforcement.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [object] $Configuration,
+        [Parameter(Mandatory)] [object] $ReadContext
+    )
+
+    if ($null -ne $script:ReadPlanContext) {
+        throw 'A read-only plan is already running in this module instance.'
+    }
+    if ($Configuration.Mode -cne 'plan' -or
+        $Configuration.NotificationMode -cne 'none' -or
+        $Configuration.EnableSessionRevocation -or
+        -not [string]::IsNullOrWhiteSpace($Configuration.EmergencyAccessGroupId) -or
+        -not [string]::IsNullOrWhiteSpace($Configuration.TeamsWebhookUrl) -or
+        -not [string]::IsNullOrWhiteSpace($Configuration.SentinelWorkspaceResourceId) -or
+        -not [string]::IsNullOrWhiteSpace($Configuration.RevocationAlertActionGroupResourceId)) {
+        throw 'The owned-reader plan supports only plan mode without emergency groups, notifications or session revocation.'
+    }
+    $tenant = [guid]::Empty
+    if (-not [guid]::TryParse([string]$ReadContext.TenantId, [ref]$tenant) -or
+        $tenant -eq [guid]::Empty -or -not $ReadContext.PSObject.Methods['ReadPimJson']) {
+        throw 'A tenant-bound read-only Graph reader is required.'
+    }
+
+    try {
+        $script:ReadPlanContext = $ReadContext
+        return New-AzdPimPlan -Configuration $Configuration -State $null
+    } finally {
+        $script:ReadPlanContext = $null
+    }
+}
 
 function Invoke-AzdPimGraphRequest {
     [CmdletBinding()]
@@ -13,6 +57,15 @@ function Invoke-AzdPimGraphRequest {
         [AllowNull()] [object] $Body,
         [switch] $AllowNotFound
     )
+
+    # Reject writes outside the SDK retry path. A failed owned read must never
+    # fall back to a cached Microsoft Graph PowerShell session.
+    if ($null -ne $script:ReadPlanContext) {
+        if ($Method -cne 'GET' -or $PSBoundParameters.ContainsKey('Body')) {
+            throw 'Writes and request bodies are forbidden in an owned-reader plan.'
+        }
+        return ($script:ReadPlanContext.ReadPimJson($Uri) | ConvertFrom-Json -Depth 100 -ErrorAction Stop)
+    }
 
     $attempt = 0
     while ($attempt -lt 5) {
@@ -93,6 +146,9 @@ function Get-AzdPimTenantId {
     [CmdletBinding()]
     param()
 
+    if ($null -ne $script:ReadPlanContext) {
+        return [string]$script:ReadPlanContext.TenantId
+    }
     $graphContext = if (Get-Command Get-MgContext -ErrorAction SilentlyContinue) { Get-MgContext } else { $null }
     if (-not $graphContext -or [string]::IsNullOrWhiteSpace([string] $graphContext.TenantId)) {
         throw 'Unable to resolve the current tenant from a proven Microsoft Graph session.'
@@ -192,14 +248,35 @@ function Get-AzdPimConditionalAccessPolicies {
 function Get-AzdPimReferencedContextIds {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)] [object[]] $ConditionalAccessPolicies,
-        [Parameter(Mandatory)] [object[]] $RolePolicies
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $ConditionalAccessPolicies,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $RolePolicies
     )
 
     $references = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($policy in $ConditionalAccessPolicies) {
-        foreach ($id in @($policy.conditions.applications.includeAuthenticationContextClassReferences)) {
-            if ($id) { [void]$references.Add([string]$id) }
+        if ($null -eq $policy -or ($policy -isnot [System.Collections.IDictionary] -and $policy -isnot [System.Management.Automation.PSCustomObject])) {
+            throw 'Conditional Access context references have an invalid policy object.'
+        }
+        # Ordinary application/user-action policies can omit this optional list.
+        # Validate present values so malformed references cannot free a used slot.
+        $conditions = Get-AzdPimStateProperty -Object $policy -Name 'conditions' -PreserveCollection
+        if ($null -ne $conditions -and $conditions -isnot [System.Collections.IDictionary] -and $conditions -isnot [System.Management.Automation.PSCustomObject]) {
+            throw 'Conditional Access context references have an invalid conditions object.'
+        }
+        $applications = Get-AzdPimStateProperty -Object $conditions -Name 'applications' -PreserveCollection
+        if ($null -ne $applications -and $applications -isnot [System.Collections.IDictionary] -and $applications -isnot [System.Management.Automation.PSCustomObject]) {
+            throw 'Conditional Access context references have an invalid applications object.'
+        }
+        $ids = Get-AzdPimStateProperty -Object $applications -Name 'includeAuthenticationContextClassReferences' -PreserveCollection
+        if ($null -eq $ids) { continue }
+        if ($ids -isnot [System.Collections.IList]) {
+            throw 'Conditional Access context references must be a list of non-empty strings.'
+        }
+        foreach ($id in $ids) {
+            if ($id -isnot [string] -or [string]::IsNullOrWhiteSpace($id) -or $id -cne $id.Trim()) {
+                throw 'Conditional Access context references must be a list of non-empty strings.'
+            }
+            [void]$references.Add($id)
         }
     }
     foreach ($policy in $RolePolicies) {
@@ -216,15 +293,21 @@ function Get-AzdPimStateProperty {
     [CmdletBinding()]
     param(
         [AllowNull()] [object] $Object,
-        [Parameter(Mandatory)] [string] $Name
+        [Parameter(Mandatory)] [string] $Name,
+        [switch] $PreserveCollection
     )
 
     if ($null -eq $Object) { return $null }
     if ($Object -is [System.Collections.IDictionary] -and $Object.Contains($Name)) {
+        if ($PreserveCollection) { return ,$Object[$Name] }
         return $Object[$Name]
     }
     $property = $Object.PSObject.Properties[$Name]
-    if ($property) { return $property.Value }
+    if ($property) {
+        # Shape validation must distinguish omitted/null, scalar, and JSON arrays.
+        if ($PreserveCollection) { return ,$property.Value }
+        return $property.Value
+    }
     return $null
 }
 
@@ -336,7 +419,7 @@ function Resolve-AzdPimContext {
     param(
         [Parameter(Mandatory)] [string] $Tier,
         [Parameter(Mandatory)] [string] $DisplayName,
-        [Parameter(Mandatory)] [object[]] $Contexts,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $Contexts,
         [Parameter(Mandatory)] [AllowEmptyCollection()] [System.Collections.Generic.HashSet[string]] $ReservedIds,
         [AllowNull()] [object] $State,
         [Parameter(Mandatory)] [bool] $AdoptExisting
@@ -404,7 +487,7 @@ function Resolve-AzdPimAuthenticationStrength {
     )
 
     if ($AuthenticationProfile -eq 'mfa') { return $null }
-    $policies = @(Get-AzdPimGraphCollection -Uri "$script:GraphBaseV1/policies/authenticationStrengthPolicies?`$top=100")
+    $policies = @(Get-AzdPimGraphCollection -Uri "$script:GraphBaseV1/policies/authenticationStrengthPolicies")
     if ($AuthenticationProfile -eq 'custom') {
         $match = @($policies | Where-Object { $_.id -eq $CustomId }) | Select-Object -First 1
         if (-not $match) { throw "Authentication strength '$CustomId' does not exist in the tenant." }
@@ -535,7 +618,7 @@ function Resolve-AzdPimConditionalAccessPolicy {
         [Parameter(Mandatory)] [string] $Key,
         [Parameter(Mandatory)] [string] $DisplayName,
         [Parameter(Mandatory)] [object] $Body,
-        [Parameter(Mandatory)] [object[]] $Policies,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $Policies,
         [AllowNull()] [object] $State,
         [Parameter(Mandatory)] [bool] $AdoptExisting
     )
@@ -948,6 +1031,7 @@ function Invoke-AzdPimApply {
 }
 
 Export-ModuleMember -Function @(
+    'New-AzdPimReadPlan',
     'Invoke-AzdPimGraphRequest',
     'Get-AzdPimGraphCollection',
     'Get-AzdPimTenantId',
