@@ -254,8 +254,29 @@ function Get-AzdPimReferencedContextIds {
 
     $references = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($policy in $ConditionalAccessPolicies) {
-        foreach ($id in @($policy.conditions.applications.includeAuthenticationContextClassReferences)) {
-            if ($id) { [void]$references.Add([string]$id) }
+        if ($null -eq $policy -or ($policy -isnot [System.Collections.IDictionary] -and $policy -isnot [System.Management.Automation.PSCustomObject])) {
+            throw 'Conditional Access context references have an invalid policy object.'
+        }
+        # Ordinary application/user-action policies can omit this optional list.
+        # Validate present values so malformed references cannot free a used slot.
+        $conditions = Get-AzdPimStateProperty -Object $policy -Name 'conditions' -PreserveCollection
+        if ($null -ne $conditions -and $conditions -isnot [System.Collections.IDictionary] -and $conditions -isnot [System.Management.Automation.PSCustomObject]) {
+            throw 'Conditional Access context references have an invalid conditions object.'
+        }
+        $applications = Get-AzdPimStateProperty -Object $conditions -Name 'applications' -PreserveCollection
+        if ($null -ne $applications -and $applications -isnot [System.Collections.IDictionary] -and $applications -isnot [System.Management.Automation.PSCustomObject]) {
+            throw 'Conditional Access context references have an invalid applications object.'
+        }
+        $ids = Get-AzdPimStateProperty -Object $applications -Name 'includeAuthenticationContextClassReferences' -PreserveCollection
+        if ($null -eq $ids) { continue }
+        if ($ids -isnot [System.Collections.IList]) {
+            throw 'Conditional Access context references must be a list of non-empty strings.'
+        }
+        foreach ($id in $ids) {
+            if ($id -isnot [string] -or [string]::IsNullOrWhiteSpace($id) -or $id -cne $id.Trim()) {
+                throw 'Conditional Access context references must be a list of non-empty strings.'
+            }
+            [void]$references.Add($id)
         }
     }
     foreach ($policy in $RolePolicies) {
@@ -272,15 +293,21 @@ function Get-AzdPimStateProperty {
     [CmdletBinding()]
     param(
         [AllowNull()] [object] $Object,
-        [Parameter(Mandatory)] [string] $Name
+        [Parameter(Mandatory)] [string] $Name,
+        [switch] $PreserveCollection
     )
 
     if ($null -eq $Object) { return $null }
     if ($Object -is [System.Collections.IDictionary] -and $Object.Contains($Name)) {
+        if ($PreserveCollection) { return ,$Object[$Name] }
         return $Object[$Name]
     }
     $property = $Object.PSObject.Properties[$Name]
-    if ($property) { return $property.Value }
+    if ($property) {
+        # Shape validation must distinguish omitted/null, scalar, and JSON arrays.
+        if ($PreserveCollection) { return ,$property.Value }
+        return $property.Value
+    }
     return $null
 }
 

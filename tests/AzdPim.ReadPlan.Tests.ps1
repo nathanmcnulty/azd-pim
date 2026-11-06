@@ -16,11 +16,13 @@ Describe 'owned-reader plan boundary' {
         $script:reader = [pscustomobject]@{
             TenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
             Calls = [System.Collections.Generic.List[string]]::new()
+            ConditionalAccessPolicies = @()
         }
         $reader | Add-Member ScriptMethod ReadPimJson {
             param([string] $Uri)
             $this.Calls.Add($Uri)
             $values = switch -Wildcard ($Uri) {
+                '*conditionalAccess/policies*' { $this.ConditionalAccessPolicies }
                 '*roleDefinitions*true' {
                     @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Fixture role'; description = ''; isBuiltIn = $true; isEnabled = $true; isPrivileged = $true }
                 }
@@ -55,6 +57,70 @@ Describe 'owned-reader plan boundary' {
         $path = Join-Path $TestDrive 'plan.json'
         Write-AzdPimPlanReport -Plan $plan -Path $path
         (Get-Content -Raw $path | ConvertFrom-Json).tiers.privileged.roles[0].displayName | Should -Be 'Fixture role'
+        InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
+    }
+
+    It 'plans ordinary CA policies with absent or null optional context targeting' -ForEach @(
+        @{ PolicyJson = '{"id":"ordinary","conditions":{"applications":{"includeApplications":["All"]}}}' },
+        @{ PolicyJson = '{"id":"ordinary","conditions":{}}' },
+        @{ PolicyJson = '{"id":"ordinary","conditions":{"applications":null}}' },
+        @{ PolicyJson = '{"id":"ordinary"}' },
+        @{ PolicyJson = '{"id":"ordinary","conditions":null}' },
+        @{ PolicyJson = '{"id":"ordinary","conditions":{"applications":{"includeAuthenticationContextClassReferences":null}}}' },
+        @{ PolicyJson = '{"id":"ordinary","conditions":{"applications":{"includeAuthenticationContextClassReferences":[]}}}' }
+    ) {
+        $policy = $PolicyJson | ConvertFrom-Json
+        $policy | Add-Member NoteProperty displayName 'Unrelated existing policy'
+        $reader.ConditionalAccessPolicies = @($policy)
+        $plan = New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader
+        $plan.tiers.privileged.context.id | Should -Be 'c1'
+        $plan.tiers.privileged.context.action | Should -Be 'create'
+        $reader.Calls.Count | Should -Be 6
+        InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
+    }
+
+    It 'retains existing context references and never allocates a referenced slot' -ForEach @(
+        @{ ReferenceJson = '["c1"]'; ExpectedId = 'c2' },
+        @{ ReferenceJson = '["c1","c2"]'; ExpectedId = 'c3' }
+    ) {
+        $reader.ConditionalAccessPolicies = @((('{"id":"context-policy","displayName":"Unrelated existing policy","conditions":{"applications":{"includeAuthenticationContextClassReferences":' + $ReferenceJson + '}}}') | ConvertFrom-Json))
+        $plan = New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader
+        $plan.tiers.privileged.context.id | Should -Be $ExpectedId
+        $plan.tiers.privileged.context.action | Should -Be 'create'
+    }
+
+    It 'rejects malformed CA policy entries instead of ignoring their possible references' -ForEach @(
+        @{ PolicyJson = 'null' },
+        @{ PolicyJson = '"invalid"' },
+        @{ PolicyJson = '1' },
+        @{ PolicyJson = '[{}]' }
+    ) {
+        $policy = ConvertFrom-Json -InputObject $PolicyJson -NoEnumerate
+        # A null collection member is rejected by mandatory parameter binding;
+        # other invalid shapes reach the explicit policy-object guard.
+        if ($null -eq $policy) {
+            { Get-AzdPimReferencedContextIds -ConditionalAccessPolicies (, $policy) -RolePolicies @() } | Should -Throw
+        } else {
+            { Get-AzdPimReferencedContextIds -ConditionalAccessPolicies (, $policy) -RolePolicies @() } | Should -Throw '*context references*invalid policy object*'
+        }
+    }
+
+    It 'rejects malformed CA context targeting instead of freeing a referenced slot' -ForEach @(
+        @{ PolicyJson = '{"conditions":"invalid"}' },
+        @{ PolicyJson = '{"conditions":[]}' },
+        @{ PolicyJson = '{"conditions":{"applications":"invalid"}}' },
+        @{ PolicyJson = '{"conditions":{"applications":[]}}' },
+        @{ PolicyJson = '{"conditions":{"applications":{"includeAuthenticationContextClassReferences":"c1"}}}' },
+        @{ PolicyJson = '{"conditions":{"applications":{"includeAuthenticationContextClassReferences":{"id":"c1"}}}}' },
+        @{ PolicyJson = '{"conditions":{"applications":{"includeAuthenticationContextClassReferences":[null]}}}' },
+        @{ PolicyJson = '{"conditions":{"applications":{"includeAuthenticationContextClassReferences":[""]}}}' },
+        @{ PolicyJson = '{"conditions":{"applications":{"includeAuthenticationContextClassReferences":[" c1"]}}}' },
+        @{ PolicyJson = '{"conditions":{"applications":{"includeAuthenticationContextClassReferences":[1]}}}' },
+        @{ PolicyJson = '{"conditions":{"applications":{"includeAuthenticationContextClassReferences":[{"id":"c1"}]}}}' },
+        @{ PolicyJson = '{"conditions":{"applications":{"includeAuthenticationContextClassReferences":[["c1"]]}}}' }
+    ) {
+        $reader.ConditionalAccessPolicies = @($PolicyJson | ConvertFrom-Json)
+        { New-AzdPimReadPlan -Configuration $configuration -ReadContext $reader } | Should -Throw '*context references*'
         InModuleScope AzdPim.Graph { $script:ReadPlanContext | Should -BeNullOrEmpty }
     }
 
