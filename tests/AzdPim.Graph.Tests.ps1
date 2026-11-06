@@ -239,6 +239,65 @@ Describe 'deployment state preservation' {
         Should -Invoke Invoke-AzdPimGraphRequest -ModuleName AzdPim.Graph -Times 0 -Exactly
     }
 
+    It 'allows only bounded response metadata and documented empty defaults during pending recovery' {
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $existing = $body | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable
+        $existing.id = 'policy-id'
+        $existing.createdDateTime = '2026-01-01T00:00:00Z'
+        $existing.modifiedDateTime = $null
+        $existing.templateId = $null
+        $existing.conditions.locations = $null
+        $existing.conditions.signInRiskLevels = @()
+        $existing.conditions.applications.excludeApplications = @()
+        $existing.conditions.users.excludeUsers = @()
+        $existing.conditions.users.includeGroups = @()
+        $existing.grantControls.termsOfUse = @()
+        $existing.sessionControls.persistentBrowser = $null
+        $state = [pscustomobject]@{ conditionalAccessPolicies = [pscustomobject]@{ privileged = [pscustomobject]@{ pendingCreate = [pscustomobject]@{ displayName = 'PIM pending'; body = $body } } } }
+        $live = $existing | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+
+        $result = & (Get-Module AzdPim.Graph) { Resolve-AzdPimConditionalAccessPolicy -Key privileged -DisplayName 'PIM pending' -Body $args[0] -Policies @($args[1]) -State $args[2] -AdoptExisting $false } $body $live $state
+        $result.recoveredPendingCreate | Should -BeTrue
+        $result.id | Should -Be 'policy-id'
+    }
+
+    It 'does not recover a same-name policy with unreviewed <label>' -ForEach @(
+        @{ label = 'included groups'; section = 'users'; name = 'includeGroups'; value = @('other-group') }
+        @{ label = 'excluded users'; section = 'users'; name = 'excludeUsers'; value = @('other-user') }
+        @{ label = 'included applications'; section = 'applications'; name = 'includeApplications'; value = @('All') }
+        @{ label = 'location conditions'; section = 'conditions'; name = 'locations'; value = @{ includeLocations = @('All') } }
+        @{ label = 'sign-in risk conditions'; section = 'conditions'; name = 'signInRiskLevels'; value = @('high') }
+        @{ label = 'terms of use'; section = 'grantControls'; name = 'termsOfUse'; value = @('other-terms') }
+        @{ label = 'persistent browser controls'; section = 'sessionControls'; name = 'persistentBrowser'; value = @{ isEnabled = $true; mode = 'always' } }
+        @{ label = 'unknown null field'; section = 'conditions'; name = 'futureCondition'; value = $null }
+        @{ label = 'unknown empty field'; section = 'conditions'; name = 'futureCondition'; value = @() }
+        @{ label = 'incorrect empty-default type'; section = 'users'; name = 'includeGroups'; value = $null }
+    ) {
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $existing = $body | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable
+        $existing.id = 'policy-id'
+        $target = switch ($section) {
+            'users' { $existing.conditions.users }
+            'applications' { $existing.conditions.applications }
+            default { $existing[$section] }
+        }
+        $target[$name] = $value
+        $state = [pscustomobject]@{ conditionalAccessPolicies = [pscustomobject]@{ privileged = [pscustomobject]@{ pendingCreate = [pscustomobject]@{ displayName = 'PIM pending'; body = $body } } } }
+        $live = $existing | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+
+        { & (Get-Module AzdPim.Graph) { Resolve-AzdPimConditionalAccessPolicy -Key privileged -DisplayName 'PIM pending' -Body $args[0] -Policies @($args[1]) -State $args[2] -AdoptExisting $true } $body $live $state } | Should -Throw '*does not exactly match*'
+        $state.conditionalAccessPolicies.privileged.pendingCreate.body.displayName | Should -Be 'PIM pending'
+    }
+
+    It 'rejects changed configuration outside the ordinary drift subset before pending POST recovery' {
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $intent = $body | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable
+        $intent.conditions.users.includeGroups = @('previous-group')
+        $state = [pscustomobject]@{ conditionalAccessPolicies = [pscustomobject]@{ privileged = [pscustomobject]@{ pendingCreate = [pscustomobject]@{ displayName = 'PIM pending'; body = ($intent | ConvertTo-Json -Depth 30 | ConvertFrom-Json) } } } }
+
+        { & (Get-Module AzdPim.Graph) { Resolve-AzdPimConditionalAccessPolicy -Key privileged -DisplayName 'PIM pending' -Body $args[0] -Policies @() -State $args[1] -AdoptExisting $false } $body $state } | Should -Throw '*does not match the current desired policy*'
+    }
+
     It 'retains a pending Conditional Access create intent if the POST succeeds before final checkpointing' {
         $script:checkpoints = @()
         $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
