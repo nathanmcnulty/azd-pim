@@ -4,6 +4,19 @@ BeforeAll {
 }
 
 Describe 'Microsoft Graph request transport' {
+    It 'does not replay a POST after a server error' {
+        Mock Get-MgContext -ModuleName AzdPim.Graph { [pscustomobject]@{ TenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } }
+        Mock Invoke-MgGraphRequest -ModuleName AzdPim.Graph {
+            $failure = [System.Exception]::new('Response lost after commit')
+            $failure | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{ StatusCode = 503 })
+            throw $failure
+        }
+        Mock Start-Sleep -ModuleName AzdPim.Graph { }
+        { Invoke-AzdPimGraphRequest -Method POST -Uri 'https://graph.microsoft.com/beta/identity/conditionalAccess/policies' -Body @{} } | Should -Throw
+        Should -Invoke Invoke-MgGraphRequest -ModuleName AzdPim.Graph -Times 1 -Exactly
+        Should -Invoke Start-Sleep -ModuleName AzdPim.Graph -Times 0 -Exactly
+    }
+
     It 'uses only the proven Microsoft Graph PowerShell session' {
         Mock Get-MgContext -ModuleName AzdPim.Graph {
             [pscustomobject]@{ TenantId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }
@@ -219,6 +232,15 @@ Describe 'deployment state preservation' {
         $result.action | Should -Be 'none'
         $result.recoveredPendingCreate | Should -BeTrue
         $result.id | Should -Be 'policy-id'
+    }
+
+    It 'blocks an absent pending POST even when adoption is enabled' {
+        $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none
+        $state = [pscustomobject]@{ conditionalAccessPolicies = [pscustomobject]@{ privileged = [pscustomobject]@{ pendingCreate = [pscustomobject]@{ body = $body } } } }
+        foreach ($adopt in @($false, $true)) {
+            { & (Get-Module AzdPim.Graph) { Resolve-AzdPimConditionalAccessPolicy -Key privileged -DisplayName 'PIM pending' -Body $args[0] -Policies @() -State $args[1] -AdoptExisting $args[2] } $body $state $adopt } | Should -Throw '*Do not retry the POST*'
+        }
+        $state.conditionalAccessPolicies.privileged.pendingCreate.body | Should -Be $body
     }
 
     It 'checkpoints a server-assigned Conditional Access create intent before the POST' {

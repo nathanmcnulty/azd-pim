@@ -136,7 +136,9 @@ function Invoke-AzdPimGraphRequest {
             if ($AllowNotFound -and $statusCode -eq 404) {
                 return $null
             }
-            if ($statusCode -in @(429, 500, 502, 503, 504) -and $attempt -lt 5) {
+            # A POST may have committed despite a failed response. Preserve the
+            # caller's durable intent instead of issuing another create.
+            if ($Method -ne 'POST' -and $statusCode -in @(429, 500, 502, 503, 504) -and $attempt -lt 5) {
                 $retryAfter = 0
                 $headersProperty = $response.PSObject.Properties['Headers']
                 $headers = if ($headersProperty) { $headersProperty.Value } else { $null }
@@ -763,7 +765,9 @@ function Resolve-AzdPimConditionalAccessPolicy {
             }
             return [pscustomobject]@{ key = $Key; id = $matching[0].id; action = 'none'; existing = $matching[0]; body = $Body; adopted = $false; recoveredPendingCreate = $true }
         }
-        return [pscustomobject]@{ key = $Key; id = $null; action = 'create'; existing = $null; body = $Body; adopted = $false; recoveredPendingCreate = $false }
+        # A missing list result does not prove that the POST failed. Graph may
+        # not expose a committed policy yet; another POST could create a duplicate.
+        throw "Pending Conditional Access creation '$Key' has no visible matching policy. Do not retry the POST. Recheck later; if it remains absent, investigate the original write and reconcile the durable state manually only after confirming its outcome."
     }
     if ($matching.Count -eq 1) {
         if (-not $AdoptExisting) {
