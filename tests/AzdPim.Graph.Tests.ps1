@@ -271,6 +271,9 @@ Describe 'deployment state preservation' {
         @{ label = 'persistent browser controls'; section = 'sessionControls'; name = 'persistentBrowser'; value = @{ isEnabled = $true; mode = 'always' } }
         @{ label = 'unknown null field'; section = 'conditions'; name = 'futureCondition'; value = $null }
         @{ label = 'unknown empty field'; section = 'conditions'; name = 'futureCondition'; value = @() }
+        @{ label = 'slash-key empty default alias'; section = 'conditions'; name = 'users/includeGroups'; value = @() }
+        @{ label = 'slash-key null default alias'; section = 'conditions'; name = 'users/excludeGuestsOrExternalUsers'; value = $null }
+        @{ label = 'slash-key response metadata alias'; section = 'grantControls'; name = 'authenticationStrength/displayName'; value = 'Unreviewed property' }
         @{ label = 'incorrect empty-default type'; section = 'users'; name = 'includeGroups'; value = $null }
     ) {
         $body = New-AzdPimConditionalAccessBody -DisplayName 'PIM pending' -ContextId c5 -EmergencyAccessGroupId '' -AuthenticationProfile mfa -DeviceRequirement none

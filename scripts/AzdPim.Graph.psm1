@@ -502,11 +502,11 @@ function Test-AzdPimPendingPolicyMatches {
         if ($Expected -is [System.Collections.IDictionary]) {
             if ($Actual -isnot [System.Collections.IDictionary]) { return $false }
             foreach ($key in $Expected.Keys) {
-                if (-not $Actual.Contains($key) -or -not (Test-ExactValue -Actual $Actual[$key] -Expected $Expected[$key] -Path "$Path/$key")) { return $false }
+                if (-not $Actual.Contains($key) -or -not (Test-ExactValue -Actual $Actual[$key] -Expected $Expected[$key] -Path "$Path/$(([string]$key).Replace('~', '~0').Replace('/', '~1'))")) { return $false }
             }
             foreach ($key in $Actual.Keys) {
                 if ($Expected.Contains($key)) { continue }
-                $childPath = "$Path/$key"
+                $childPath = "$Path/$(([string]$key).Replace('~', '~0').Replace('/', '~1'))"
                 if ($LivePolicy -and $childPath -cin $responseMetadata) { continue }
                 if ($LivePolicy -and $childPath -cin $nullDefaults -and $null -eq $Actual[$key]) { continue }
                 if ($LivePolicy -and $childPath -cin $emptyDefaults -and $Actual[$key] -is [System.Collections.IList] -and $Actual[$key].Count -eq 0) { continue }
