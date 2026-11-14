@@ -238,6 +238,43 @@
       ],
       "blocker": null,
       "claim": null
+    },
+    {
+      "id": "PIM-007",
+      "title": "Reject inconclusive suites in the shared validation and release runner",
+      "kind": "maintenance",
+      "priority": "P1",
+      "status": "done",
+      "wave": 0,
+      "problem": "Pester 6.2 reports an inconclusive-only suite with no failed tests, so the shared runner could report success and continue later validation commands.",
+      "scope": [
+        "scripts/Test-Repository.ps1 outcome gate",
+        "Isolated actual-runner regression tests with native command tripwires"
+      ],
+      "acceptance": [
+        "Require an overall Passed result and zero inconclusive tests while preserving every existing empty/failure/skip/not-run check.",
+        "Run real Pester 6.2 fixtures through an unmodified copy of the maintained runner; an inconclusive fixture reaches zero later native commands and a passing fixture retains all five stages.",
+        "Preserve baseline version selection, runtime/deployment code, permissions, package locks, component pins and native qualification requirements."
+      ],
+      "validation": [
+        "./scripts/Test-Repository.ps1 -PesterVersion 6.2.0",
+        "Confirm the regression fails on main 691ecf4d9b8977e19c66f8dfa2065a40d2e40601 and passes with the corrected gate.",
+        "Validate canonical backlog schema and regenerate/check docs/backlog.md using reviewed Reference main 3f88050332f9647da5e3bc8044f87cf2c7101c08."
+      ],
+      "dependencies": [],
+      "authorization": "local-only",
+      "components": [],
+      "sources": [
+        "https://github.com/nathanmcnulty/azd-pim/issues/21",
+        "scripts/Test-Repository.ps1"
+      ],
+      "evidence": [
+        "Freshly fetched main 691ecf4d9b8977e19c66f8dfa2065a40d2e40601 already includes merged PowerShell/Pester baseline PR #22; that work was preserved. The original actual runner accepts an inconclusive-only real Pester 6.2 suite and reaches all five intercepted npm/node/Bicep stages. The new regression suite produces one passing positive control and one failing original inconclusive case before the fix. Native requests are intercepted; the Graph SDK import is stubbed only inside the isolated fixture process.",
+        "The full corrected registered validator passes on PowerShell 7.6.6/Pester 6.2.0: 136/136 Pester tests and 21/21 Node tests, zero failures/skips/inconclusive/not-run, source parse, offline dependency restoration, Node syntax and Bicep 0.42.1 compile. Two new actual-entrypoint cases assert real fixture execution, exact Pester version, the passing path and zero downstream calls after an inconclusive result. Total registered validation wall time was 83.11 seconds.",
+        "Only overall-result and inconclusive-result rejection are added to the shared CI/release gate; previous safety checks remain. No dependency, module, vendor, permission, infrastructure, role-policy, poller or notification code changed. No Azure/Graph authentication, live pilot, role mutation, delivery, deployment or tenant cleanup ran. Issue #21 and PIM-002 native qualification remain open."
+      ],
+      "blocker": null,
+      "claim": null
     }
   ]
 }
