@@ -22,7 +22,7 @@
       "evidenceState": "code",
       "evidence": [
         {
-          "sha256": "26cdbf1c8ceec7e11ee58dca06724693aa0330b2b907a238eaaf9250e4d2360f",
+          "sha256": "15cc21d44c3a44610afad59163984dc70c0b95b6882ead576b385fff746fe7e3",
           "path": "scripts/AzdPim.Optional.psm1"
         },
         {
