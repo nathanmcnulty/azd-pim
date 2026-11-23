@@ -157,7 +157,7 @@ The scripts use Microsoft Graph PowerShell for every Graph request and Azure CLI
 
 The lifecycle hooks explicitly permit replacing a mismatched inherited Graph context because the expected account and tenant come from the selected Azure CLI user context. This avoids silently continuing as a different administrator. Optional permissions are not requested merely to avoid a possible future sign-in after configuration changes, so enabling a new optional workflow can require consent once on the next run. The plan fails on missing consent or directory roles rather than falling back to a weaker configuration.
 
-The vendored `graph-delegated-authentication` and `flex-scheduled-poller-host` components and their exact source revisions and SHA-256 hashes are recorded in `azd-components.lock.json`. Update them from `azd-reference`; do not edit managed files under `scripts/vendor` or `infra/vendor` locally.
+The vendored `graph-delegated-authentication` and `flex-scheduled-poller-host` components and their exact source revisions and SHA-256 hashes are recorded in `azd-components.lock.json`. See [Shared component updates](docs/component-updates.md) for reviewing proposed updates from `azd-reference`. Leave managed files under `scripts/vendor` and `infra/vendor` intact.
 
 The notification envelope and delivery-result v1 schemas are also pinned from `azd-reference`, but remain data contracts rather than a shared notification runtime. Polling normalization, safe administrator-facing route results, idempotency, and the separate Sentinel adapter boundary are documented in [`docs/notification-contracts.md`](docs/notification-contracts.md).
 
