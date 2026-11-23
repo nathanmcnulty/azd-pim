@@ -559,6 +559,22 @@ function Enable-AzdPimRevocationExtensionForRoles {
     return @($results)
 }
 
+function New-AzdPimWorkflowHostObservation {
+    param([string] $WorkflowResourceId, [uri] $CallbackUri)
+
+    $resourceId = $WorkflowResourceId.ToLowerInvariant()
+    if ($resourceId -cnotmatch '\A/subscriptions/(?!00000000-0000-0000-0000-000000000000/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/resourcegroups/[a-z0-9_().-]{0,89}[a-z0-9_()-]/providers/microsoft\.logic/workflows/[a-z0-9][a-z0-9_-]{0,79}\z' -or
+        -not $CallbackUri.IsAbsoluteUri -or $CallbackUri.Scheme -cne 'https' -or
+        $CallbackUri.HostNameType -ne [UriHostNameType]::Dns) {
+        return
+    }
+    $hostname = $CallbackUri.Host
+    if ($hostname.Length -gt 253 -or $hostname -cnotmatch '\A(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\z') {
+        return
+    }
+    [ordered]@{ workflowResourceId = $resourceId; hostname = $hostname }
+}
+
 function Initialize-AzdPimRevocationExtension {
     [CmdletBinding()]
     param(
@@ -567,9 +583,11 @@ function Initialize-AzdPimRevocationExtension {
         [Parameter(Mandatory)] [string] $TenantId,
         [Parameter(Mandatory)] [string] $EnvironmentName,
         [Parameter(Mandatory)] [object] $State,
-        [Parameter(Mandatory)] [scriptblock] $PersistState
+        [Parameter(Mandatory)] [scriptblock] $PersistState,
+        [ref] $WorkflowHostObservation
     )
 
+    if ($null -ne $WorkflowHostObservation) { $WorkflowHostObservation.Value = $null }
     $callback = Invoke-AzdPimAzRest -Method POST -Uri "https://management.azure.com$WorkflowResourceId/triggers/manual/listCallbackUrl?api-version=2019-05-01"
     $callbackUri = [uri]$callback.value
     $targetUrl = ConvertTo-AzdPimOAuthCallbackUrl -CallbackUri $callbackUri
@@ -588,6 +606,9 @@ function Initialize-AzdPimRevocationExtension {
     Set-AzdEnvironmentValue -Name 'AZD_PIM_REVOCATION_CUSTOM_EXTENSION_ID' -Value $postApprovalExtensionId
     Set-AzdEnvironmentValue -Name 'AZD_PIM_REVOCATION_PRE_APPROVAL_CUSTOM_EXTENSION_ID' -Value $preApprovalExtensionId
     Set-AzdEnvironmentValue -Name 'AZD_PIM_REVOCATION_POST_APPROVAL_CUSTOM_EXTENSION_ID' -Value $postApprovalExtensionId
+    if ($null -ne $WorkflowHostObservation) {
+        $WorkflowHostObservation.Value = New-AzdPimWorkflowHostObservation -WorkflowResourceId $WorkflowResourceId -CallbackUri $callbackUri
+    }
     return [pscustomobject]@{
         applicationObjectId = $application.objectId
         applicationClientId = $application.clientId

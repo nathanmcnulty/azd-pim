@@ -31,3 +31,21 @@ Both privileged and less-privileged tiers are validated independently. `selected
 Plan and validation reports never contain the Teams Workflow webhook URL. They record only whether a webhook is configured, and report writing fails closed if an unsafe configuration object reaches the serialization boundary.
 
 Session revocation cannot be safely tested with a synthetic callback because a valid test would revoke a real administrator's sessions and the OAuth-protected endpoint is intended for the PIM service. Prove it by activating one pilot role and correlating the PIM request with the Logic App run.
+
+## Native workflow-host observation
+
+A separately reviewed native runner can invoke `scripts/Post-Provision.Native.ps1`
+with exclusive ownership of the child's stdout. The normal `azure.yaml` hook
+continues to invoke `Post-Provision.ps1` directly.
+
+On complete enforced success with session revocation enabled, the native entry
+point emits one UTF-8 JSON object with `workflowResourceId` and `hostname`. It uses
+the exact ARM workflow ID and DNS host from the callback already observed in
+memory. Role linking and the final report and receipt must succeed first.
+Plan mode, a disabled feature, or a noncanonical pair yields no observation.
+A hook failure exits nonzero and leaves the output pipe empty, even if a partial
+deployment report exists.
+
+The runner must verify the pinned source and modules and validate the complete
+deployment outcome and workflow ID independently. The observation carries no
+callback URL, token, or tenant binding. The normal hook retains its existing reports and permission requirements.

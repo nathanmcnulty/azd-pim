@@ -1,6 +1,11 @@
 #Requires -Version 7.6
+param([ref] $NativeWorkflowHostObservation)
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+$workflowHostCandidate = $null
+if ($null -ne $NativeWorkflowHostObservation) { $NativeWorkflowHostObservation.Value = $null }
 
 Import-Module (Join-Path $PSScriptRoot 'AzdPim.Common.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'AzdPim.Graph.psm1') -Force
@@ -124,7 +129,11 @@ try {
         if ([string]::IsNullOrWhiteSpace($env:AZD_PIM_REVOCATION_LOGIC_APP_RESOURCE_ID) -or [string]::IsNullOrWhiteSpace($env:AZD_PIM_REVOCATION_LOGIC_APP_PRINCIPAL_ID)) {
             throw 'The session-revocation Logic App deployment outputs are missing.'
         }
-        $sessionRevocation = Initialize-AzdPimRevocationExtension -WorkflowResourceId $env:AZD_PIM_REVOCATION_LOGIC_APP_RESOURCE_ID -WorkflowPrincipalId $env:AZD_PIM_REVOCATION_LOGIC_APP_PRINCIPAL_ID -TenantId $plan.tenantId -EnvironmentName $env:AZURE_ENV_NAME -State $state -PersistState { param($checkpoint) Save-AzdPimState -State $checkpoint }
+        $observationArguments = @{}
+        if ($null -ne $NativeWorkflowHostObservation) {
+            $observationArguments.WorkflowHostObservation = [ref] $workflowHostCandidate
+        }
+        $sessionRevocation = Initialize-AzdPimRevocationExtension -WorkflowResourceId $env:AZD_PIM_REVOCATION_LOGIC_APP_RESOURCE_ID -WorkflowPrincipalId $env:AZD_PIM_REVOCATION_LOGIC_APP_PRINCIPAL_ID -TenantId $plan.tenantId -EnvironmentName $env:AZURE_ENV_NAME -State $state -PersistState { param($checkpoint) Save-AzdPimState -State $checkpoint } @observationArguments
         $scopedRoleRules = @($plan.tiers.privileged.roleRules) + @($plan.tiers.lessPrivileged.roleRules)
         $sessionRevocation | Add-Member -NotePropertyName roleLinking -NotePropertyValue @(
             Enable-AzdPimRevocationExtensionForRoles -RoleRules $scopedRoleRules -PreApprovalCustomExtensionId $sessionRevocation.preApprovalCustomExtensionId -PostApprovalCustomExtensionId $sessionRevocation.postApprovalCustomExtensionId
@@ -147,3 +156,7 @@ Write-Host "Deployment report: $appliedReportPath"
 Write-Host "Deployment receipt: $receiptPath"
 Write-Host "State file: $(Get-AzdPimStatePath)"
 Write-PortalLinks
+
+if ($null -ne $NativeWorkflowHostObservation) {
+    $NativeWorkflowHostObservation.Value = $workflowHostCandidate
+}
