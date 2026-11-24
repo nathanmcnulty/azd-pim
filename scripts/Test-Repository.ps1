@@ -58,8 +58,8 @@ else {
 Import-Module Microsoft.Graph.Authentication -MinimumVersion 2.30.0 -Force -ErrorAction Stop
 Write-Information "PowerShell $($PSVersionTable.PSVersion); Pester $((Get-Module Pester).Version)" -InformationAction Continue
 $pesterResult = Invoke-Pester -Path (Join-Path $templateRoot 'tests') -Output Detailed -PassThru
-if ($null -eq $pesterResult -or $pesterResult.TotalCount -eq 0 -or $pesterResult.FailedCount -gt 0 -or $pesterResult.FailedContainersCount -gt 0 -or $pesterResult.SkippedCount -gt 0 -or $pesterResult.NotRunCount -gt 0) {
-    throw "$($pesterResult.FailedCount) Pester test(s) failed."
+if ($null -eq $pesterResult -or $pesterResult.Result -ne 'Passed' -or $pesterResult.TotalCount -eq 0 -or $pesterResult.FailedCount -gt 0 -or $pesterResult.FailedContainersCount -gt 0 -or $pesterResult.SkippedCount -gt 0 -or $pesterResult.InconclusiveCount -gt 0 -or $pesterResult.NotRunCount -gt 0) {
+    throw 'Every registered Pester test must pass without skipped, inconclusive or unexecuted cases.'
 }
 
 Write-Host 'Checking and testing the polling Function with local Node dependencies.'
